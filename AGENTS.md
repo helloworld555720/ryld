@@ -217,6 +217,11 @@ those files; re-run the CLI instead.
 - **2026-11-13** — Single Next app, minimal tests (Vitest units + smoke checklist).
 - **2026-11-13** — RBAC and Cloudflare Turnstile explicitly deferred, structured for now
   (T5.3, T5.4).
+- **2026-11-13** — Upstream finding: the auth service allows duplicate emails and lets
+  unverified users sign in. This repo never treats `email` as an identity or a map key
+  (it is display-only; `user.id` is the key), so the frontend needs no change — but do not
+  add email-keyed caches, and do not assume sign-up is safe. Remediation belongs to the
+  auth service; see `docs/auth-contract.md`.
 
 ## 11. Deferred / follow-ups
 

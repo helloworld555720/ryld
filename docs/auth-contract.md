@@ -74,15 +74,97 @@ const res = await fetch(`${AUTH_SERVICE_URL}/api/auth/token`, {
 - The `token` is a JWKS-verifiable JWT for the API service.
 - Do **not** add `jwtClient()` to the browser client — the browser never mints tokens.
 
-## Still UNKNOWN (fill on first real login)
+## Verified on a real sign-in (2026-11-13, direct to `:8080`)
 
-| Fact | How to capture |
+| Fact | Observed |
 | --- | --- |
-| Cookie name + attributes (`__Secure-` prefix, `Domain`, `SameSite`, `HttpOnly`, `Secure`, `Max-Age`) | `Set-Cookie` on a real sign-in, and the cookie jar after proxying |
-| Session lifetime / refresh semantics | `Max-Age` on the session cookie |
-| JWT `iss` / `aud` / `exp` | Decode the token payload (base64url) |
-| Claims carrying roles/permissions | Same decode — needed for T5.4 |
-| Rate-limit headers/thresholds | Observed during repeated sign-in attempts |
+| Cookie name | `better-auth.session_token` (no `__Secure-` prefix on HTTP) |
+| Cookie attributes | `Max-Age=604800` (7 days), `Path=/`, `HttpOnly`, `SameSite=Lax`; **no `Domain`**, **no `Secure`** on plain HTTP |
+| Session lifetime | 7 days, sliding (no refresh token, no rotation endpoint in use) |
+| JWT claims | `{ iat, email, email_verified, sub, exp, iss, aud }` — `iss=http://localhost:8080`, `aud=main-api`, `exp` = `iat + 900` (15 min) |
+| Role/permission claims | **none** — RBAC is not in the token; T5.4 needs a separate source |
+| Sign-in response body | `{ redirect: false, token: "<session token>", user: {...} }` — note `token` is the *session* token, not a JWT |
+| Rate limiting | present: repeated `sign-in/email` attempts return `429` (no `RateLimit-*` headers observed) |
+| `POST /delete-user` | `404` even with a valid session — endpoint is disabled (`user.deleteUser.enabled: false`) |
+
+## Duplicate accounts: **allowed** (verified 2026-11-13)
+
+Direct against the auth service, three sequential `POST /api/auth/sign-up/email` calls with the
+**same** email (one of them uppercase, normalized to lowercase in storage) all returned `200`
+and created three distinct users:
+
+| Attempt | Stored email | User id |
+| --- | --- | --- |
+| 1 (lowercase) | `probe-dup-20261113220820@example.com` | `FK2lcG4YVOqtxcxE4X75sjBZP71CyEEm` |
+| 2 (identical body, ~1.3 s later) | same | `2KfCOFG83d8DXLDmG9NlsMaSEBWQhJE4` |
+| 3 (uppercase body) | same (lowercased) | `uvXU21uEXcRrySz6CZbV840fhfROywBi` |
+
+Two separate defects, one fix each:
+
+1. **No unique constraint on `user.email` in the database.** This is proven, not inferred: three
+   inserts of the identical value committed. better-auth's own `coreSchema` declares
+   `email: { unique: true }` (`@better-auth/core/dist/db/get-tables.mjs`), so the table was
+   created without the constraint (hand-written SQL, a schema push that dropped it, or a
+   non-better-auth migration).
+2. **The application-level duplicate check did not fire.** Stock better-auth calls
+   `internalAdapter.findUserByEmail(normalizedEmail)` and throws
+   `422 USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL` (`better-auth/dist/api/routes/sign-up.mjs`).
+   Attempt 2 posted a byte-identical body and still created a new user, so either the service
+   exposes a custom sign-up handler that skips the check, or the lookup path cannot see the
+   row written ~1 s earlier (read replica / negative cache). Find out which from the service's
+   code — but the unique index is what makes it impossible either way.
+
+**Also observed:** `emailVerified: false` accounts can sign in and receive a session. The JWT
+then carries `email_verified: false`. So `requireEmailVerification` is effectively off.
+
+**Impact:** the second and later accounts for an email shadow the first; whoever registers an
+address first does not own it, and password reset would pick one of the duplicates
+non-deterministically. Treat as a security bug in the auth service, not a UI issue.
+
+## Remediation — auth service (owner: auth service, not this repo)
+
+1. **Dedupe, then constrain** (mandatory; fixes the class of bug):
+   ```sql
+   -- find duplicates (case-insensitive, since emails are stored lowercased)
+   SELECT lower(email) AS email, count(*)
+   FROM "user" GROUP BY 1 HAVING count(*) > 1;
+
+   -- keep one per email (e.g. the verified one, else the oldest), delete the rest
+   -- for each duplicate: sessions -> accounts -> user, in that order
+   DELETE FROM session WHERE "userId" IN (SELECT id FROM "user" WHERE id = $victim);
+   DELETE FROM account WHERE "userId" IN (SELECT id FROM "user" WHERE id = $victim);
+   DELETE FROM "user" WHERE id = $victim;
+
+   CREATE UNIQUE INDEX "user_email_unique" ON "user" (lower(email));
+   ```
+   Re-running better-auth's own migrate/`generate` would also emit this index; the `lower(email)`
+   form additionally makes `Foo@x` and `foo@x` collide at the DB level, which matches
+   better-auth's lowercase normalization.
+2. **Keep the app-level check and map the DB error.** Catch the unique violation on user create
+   and return `USER_ALREADY_EXISTS` so concurrent sign-ups get a clean 422 instead of a 500.
+3. **Turn email verification on for real**, if accounts should not be usable before verifying:
+   ```ts
+   emailAndPassword: { enabled: true, requireEmailVerification: true },
+   emailVerification: {
+     sendVerificationEmail: async ({ user, url }) => { /* wire a real mailer */ },
+     sendOnSignUp: true,
+   },
+   ```
+   `requireEmailVerification` only blocks sign-in when `sendVerificationEmail` is implemented.
+4. **Close registration** if only known people may have accounts (internal tool):
+   ```ts
+   emailAndPassword: { enabled: true, disableSignUp: true },
+   ```
+   Accounts are then created by an admin (admin plugin `createUser`) or a seed script. This
+   returns `EMAIL_PASSWORD_SIGN_UP_DISABLED` and is authoritative regardless of the UI.
+5. **Defense in depth — domain allowlist** in `databaseHooks.user.create.before`: reject
+   addresses outside the company domain, and normalize `email` to lowercase there.
+
+## Frontend consequences (this repo)
+
+The UI is not the control — the steps above are. But to avoid offering a dead-end form:
+remove `signUp` from the allowlist in `app/auth/[path]/page.tsx` once the service closes
+registration, so `/auth/sign-up` 404s instead of rendering a form that always fails.
 
 **Cookie gotcha:** if the auth service ever decides it is on HTTPS it emits
 `__Secure-`-prefixed cookies, which `http://localhost` drops silently. Keep dev on HTTP,
