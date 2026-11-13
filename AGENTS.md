@@ -73,6 +73,7 @@ lib/
   env.ts                   zod-validated env, server/public split
   errors.ts                ApiError, error mapping, safe messages
   redirect.ts              safeRedirect() — same-origin relative paths only
+  csp.ts                   nonce-based Content-Security-Policy (pure, unit-tested)
   query-client.ts          one QueryClient per request / browser singleton
 docs/
   auth-contract.md         verified auth service facts (Task T0.1)
@@ -122,6 +123,12 @@ docs/
     middleware is `proxy.ts`; with `cacheComponents` an uncached read outside
     `<Suspense>` is a build error, so auth-reading routes set `export const instant = false`
     and block on the server; there is no `runtime` segment export.
+18. **CSP nonces force a request-time render.** The nonce is minted in `proxy.ts` and applied
+    during SSR, so a prerendered shell cannot carry one. The root layout therefore calls
+    `connection()` and sets `instant = false`. Do not remove either without replacing the
+    nonce policy: a static page under `script-src 'nonce-…'` would ship scripts that the
+    browser refuses to run. `style-src` keeps `'unsafe-inline'` because nonces do not cover
+    Radix `style` attributes — never add `'unsafe-inline'` to `script-src` instead.
 
 ## 6. Conventions
 
@@ -224,6 +231,12 @@ those files; re-run the CLI instead.
   email-existence checks in the UI. See `docs/auth-contract.md`.
 - **2026-11-13** — `email` is display-only in this repo; `user.id` is the identity key. Do not add
   email-keyed caches or lookups.
+- **2026-11-13** — CSP is enforced, not report-only, and `style-src` keeps `'unsafe-inline'`
+  because CSP nonces do not cover `style` attributes (Radix positioning breaks without it).
+  Script injection stays nonce-locked. Accepted cost: the root layout must render per request,
+  so `/` and `/_not-found` are dynamic. Verified: 16/16 rendered script tags carry the nonce.
+- **2026-11-13** — Deployment (Phase 6) deferred by the owner; Docker/standalone smoke is not
+  part of the current scope.
 
 ## 11. Deferred / follow-ups
 

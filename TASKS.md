@@ -6,12 +6,13 @@ mixed bag). Tick `[x]` only when the acceptance criteria in §9 of `AGENTS.md` a
 Legend: **Deps** = must be done first. **Est** = rough effort for one agent.
 `[~]` = code complete, end-to-end unverified (usually blocked on a real account or the API URL).
 
-**Progress (2026-11-13):** T0.1, T0.3–T0.8, T1.1–T1.3, T1.5 done. `bun run check` green:
-21 unit tests, typecheck clean, lint clean, `next build` succeeds. Auth proxy verified
+**Progress (2026-11-13):** T0.1, T0.4–T0.8, T1.1–T1.5, T5.1 done. `bun run check` green:
+31 unit tests, typecheck clean, lint clean, `next build` succeeds. Auth proxy verified
 against the live auth service: GET passthrough, POST body forwarding, `Origin` forwarded
-(trusted → 401, evil → 403), `no-store`, token endpoint reachable. T1.4 is code-complete
-but needs a real login. T1.6, Phase 2+ not started. `API_URL` is a placeholder
-(`http://localhost:3001`).
+(trusted → 401, evil → 403), `no-store`, token endpoint reachable. Sign up / sign in / sign
+out verified in a browser (T1.4, including the live `Set-Cookie` hop). Nonce-based CSP is
+enforced and verified to cover every rendered script (T5.1). T1.6, T1.7, T5.2, Phases 2–4
+open. `API_URL` is still a placeholder (`http://localhost:3001`) and blocks Phase 2.
 
 > **Correction (2026-11-13):** an earlier note here claimed the auth service allowed duplicate
 > emails. It does **not**. Three `sign-up/email` calls for one address returned `200` with three
@@ -63,15 +64,17 @@ endpoints: method, path, params, request body, response shape, status codes.
 **Accept:** at least the endpoints needed for the first feature slice are captured with one
 real example response each. Secrets redacted.
 
-### [ ] T0.3 — Scaffold the app
-**Deps:** none · **Est:** 30m
+### [x] T0.3 — Scaffold the app
+**Deps:** none · **Est:** 30m — **done 2026-11-13 (Next 16.4.6, React 19.3, Bun 1.4.4)**
 
 ```bash
 bunx create-next-app@latest . --ts --tailwind --app --eslint --no-src-dir --import-alias "@/*"
 ```
 
-Then: `tsconfig` `strict: true`, `output: "standalone"`, `typedRoutes: true`, remove the
-demo page content, commit `.nvmrc`/`engines` if useful, ensure `bun.lock` is committed.
+Shipped: `strict: true`, `output: "standalone"`, scaffold `cacheComponents` +
+`partialPrefetching` kept, demo page replaced, `bun.lock` committed, Turbopack root pinned.
+`typedRoutes` **not** enabled (deferred until the generated auth components are confirmed
+compatible — it changes `Link` typing across the registry components).
 
 **Accept:** `bun run dev` serves a blank page; `bun run build` succeeds; `bun run typecheck`
 is clean.
@@ -167,22 +170,22 @@ still reach the client (needed by better-auth-ui error handling); no secrets in 
 **Accept:** unit tests for the response parser (valid, null, malformed). `requireSession()`
 does not fire for public routes.
 
-### [~] T1.4 — better-auth-ui screens
-**Deps:** T1.1, T1.2 · **Est:** 1.5h — **installed and routed; end-to-end login unverified**
+### [x] T1.4 — better-auth-ui screens
+**Deps:** T1.1, T1.2 · **Est:** 1.5h — **closed 2026-11-13: manual browser pass by the owner**
 
 ```bash
 bunx shadcn@latest add @better-auth-ui/auth
 ```
 
-Done: the registry added 22 components plus `@better-auth-ui/{core,react}`.
+The registry added 22 components plus `@better-auth-ui/{core,react}`.
 `AuthProvider` is wired in `components/providers.tsx` (`redirectTo="/dashboard"`,
 `navigate` → Next router, `Link` → `next/link`), and `app/auth/[path]/page.tsx` validates
 the path against `viewPaths.auth` before rendering `<Auth path />`.
 
-**Remaining (needs a real account):** sign up → sign in → land on `/dashboard` → sign out
-→ sign in again. Confirm the `Set-Cookie` from the proxy is host-only (no `Domain`) and
-that the browser stores it for `localhost:3000`. That cookie check is the only part of
-this task that cannot be verified without credentials.
+**Verified manually in a browser:** sign up → sign in → sign out, all working against the
+live auth service through the proxy. This is also the end-to-end proof of the `Set-Cookie`
+hop: the browser accepted and reused the session cookie minted at `localhost:8080` and
+narrowed by our proxy, which is the only part unit tests cannot cover.
 
 ### [x] T1.5 — Route protection
 **Deps:** T1.3 · **Est:** 1h
@@ -371,16 +374,33 @@ row.
 
 ## Phase 5 — Hardening (do not skip before "done")
 
-### [ ] T5.1 — CSP + headers audit
-**Deps:** T0.7 · **Est:** 1.5h
+### [x] T5.1 — CSP + headers audit
+**Deps:** T0.7 · **Est:** 1.5h — **done 2026-11-13, enforced (not report-only)**
 
-Nonce-based CSP via middleware (`script-src 'nonce-…' 'strict-dynamic'`, `style-src` with
-the minimum Next/Tailwind needs, `connect-src 'self'`, `img-src 'self' data:`,
-`frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`).
-Verify better-auth-ui and shadcn dialogs still work.
+`lib/csp.ts` builds the policy as a pure function (unit-tested, 10 cases); `proxy.ts` issues a
+fresh 128-bit nonce per request and sets the header on both the request and the response,
+including on the anonymous `/dashboard` redirect.
 
-**Accept:** zero CSP violations in the console across auth + app routes; no
-`unsafe-inline` for scripts; report-only run first, then enforce.
+Shipped policy:
+`default-src 'self'` · `script-src 'self' 'nonce-…' 'strict-dynamic'` (no `unsafe-inline`, no
+`unsafe-eval` outside dev) · `style-src 'self' 'unsafe-inline'` · `img-src 'self' blob: data:` ·
+`font-src 'self' data:` · `connect-src 'self'` · `object-src 'none'` · `base-uri 'self'` ·
+`form-action 'self'` · `frame-ancestors 'none'` · `worker-src 'self' blob:` ·
+`upgrade-insecure-requests` (production only).
+
+Two deviations from the Next guide, both deliberate:
+
+- **`style-src` keeps `'unsafe-inline'` and takes no nonce.** CSP nonces do not cover `style`
+  *attributes*, which Radix/shadcn use for positioning (dropdowns, sheets, tooltips). A nonce
+  here would break the UI. Scripts stay nonce-locked, which is the XSS-relevant half.
+- **Root layout forces a request-time render** (`await connection()` + `instant = false`),
+  because nonces are applied during SSR and a prerendered shell has no request to take one
+  from. Verified: every rendered `<script>` carries the nonce (`16/16`, zero without), and
+  consecutive requests get different nonces. The cost is that `/` and `/_not-found` are no
+  longer static — negligible, since every real route is auth-gated and already dynamic.
+
+**Still to confirm in a browser:** zero CSP violations on auth + dashboard (needs a real login;
+dialogs/sheets are the likely offenders if Radix ever moves away from style attributes).
 
 ### [ ] T5.2 — Auth/security review
 **Deps:** Phases 1–4 · **Est:** 1.5h
@@ -422,7 +442,7 @@ limiter only if the proxy can't do it.
 
 ---
 
-## Phase 6 — Deploy
+## Phase 6 — Deploy (deferred by the owner, 2026-11-13)
 
 ### [ ] T6.1 — Dockerfile + standalone
 **Deps:** T0.3 · **Est:** 1h

@@ -1,29 +1,67 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { buildCsp, newNonce } from "@/lib/csp";
+
 /**
  * Optimistic, cookie-presence check only. It exists to avoid rendering the
  * authenticated shell for anonymous visitors; it is NOT authorization.
  * The real check is `requireSession()` in the (app) layout, which validates
  * the session against the auth service.
  *
- * Next 16 renamed `middleware.ts` to `proxy.ts`. See node_modules docs.
+ * It also issues the per-request CSP nonce (Next 16 renamed middleware to
+ * proxy; nonces must be generated per request, before rendering).
  */
+const PROTECTED_PREFIXES = ["/dashboard"];
+
+function isProtected(pathname: string): boolean {
+  return PROTECTED_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
 export function proxy(request: NextRequest) {
+  const nonce = newNonce();
+  const csp = buildCsp({ nonce, isDev: process.env.NODE_ENV === "development" });
+
+  const requestHeaders = new Headers(request.headers);
+  // Next reads the nonce back out of the CSP request header and applies it to
+  // its own script tags; `x-nonce` is available for our own <Script> usage.
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("content-security-policy", csp);
+
+  const { pathname, search } = request.nextUrl;
+
   const hasSessionCookie = request.cookies
     .getAll()
     // Matches both `better-auth.session_token` and the `__Secure-` variant.
     .some(({ name }) => name.includes("better-auth.session_token"));
 
-  if (hasSessionCookie) return NextResponse.next();
+  if (isProtected(pathname) && !hasSessionCookie) {
+    const signInUrl = new URL("/auth/sign-in", request.url);
+    signInUrl.searchParams.set("redirectTo", pathname + search);
 
-  const signInUrl = new URL("/auth/sign-in", request.url);
-  signInUrl.searchParams.set(
-    "redirectTo",
-    request.nextUrl.pathname + request.nextUrl.search,
-  );
-  return NextResponse.redirect(signInUrl);
+    const redirect = NextResponse.redirect(signInUrl);
+    redirect.headers.set("content-security-policy", csp);
+    return redirect;
+  }
+
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  response.headers.set("content-security-policy", csp);
+  return response;
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*"],
+  matcher: [
+    /*
+     * Every page route, excluding API handlers and static assets (which need no
+     * CSP), and skipping prefetches: those return an RSC payload, not HTML.
+     */
+    {
+      source: "/((?!api|_next/static|_next/image|favicon.ico).*)",
+      missing: [
+        { type: "header", key: "next-router-prefetch" },
+        { type: "header", key: "purpose", value: "prefetch" },
+      ],
+    },
+  ],
 };
