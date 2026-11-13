@@ -3,6 +3,19 @@
 Working agreement for AI agents and humans building this frontend. Read this before
 touching code. If reality disagrees with this file, update this file first.
 
+## 0. Scope — hard rule
+
+Work only inside this repository: `C:\Users\SAHAN\Documents\projects\ryld`. Every read,
+write, edit, delete and command must resolve inside this directory.
+
+- Never inspect, modify or execute anything in a parent directory, a sibling project, the
+  home directory, or system/global configuration.
+- No `cd ..`, no absolute paths that escape the root, no editing `~/.config`, no global
+  installs or edits to globally installed tooling.
+- Harness-managed scratch space (screenshots, command output) is the only exception, and it
+  is write-only scratch: never use it to change files outside this repository.
+- If a task appears to require crossing this boundary, stop and ask instead of proceeding.
+
 ## 1. What this is
 
 An internal tool's web frontend. It consumes two services that already exist and are
@@ -263,6 +276,9 @@ those files; re-run the CLI instead.
   sign-in, unknown provider or traversal → `404`. Google's client display name is still
   "rayload", and the upstream `state` is the user id rather than a random nonce — both are
   API-service concerns, recorded in `docs/api-inventory.md`.
+- **2026-11-14** — Hard scope rule (§0): agents and humans work only inside this
+  repository. Harness-managed scratch (screenshots, command output) is the sole, write-only
+  exception; anything else outside the root is out of bounds, and ambiguity means asking.
 - **2026-11-14** — `app/(app)/layout.tsx` awaits `connection()` before rendering the shell.
   The shell imports better-auth's client, whose store reads `Date.now()`; under
   cacheComponents that is an unstable value if the subtree is ever prerendered, and dev
