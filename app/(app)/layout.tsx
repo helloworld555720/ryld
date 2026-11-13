@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { connection } from "next/server";
 
 import { AppShell } from "@/components/app/app-shell";
 import { requireSession } from "@/lib/auth/server";
@@ -15,6 +16,15 @@ export const instant = false;
 export default async function AppLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  /*
+   * Mark this segment request-time before anything renders. The shell imports
+   * better-auth's client, whose store reads `Date.now()`; under cacheComponents
+   * that is an "unstable value" if the subtree is ever prerendered, and dev
+   * reports it as a blocking-prerender error. Everything here is session-gated
+   * anyway, so rendering per request is the correct behaviour, not a workaround.
+   */
+  await connection();
+
   const session = await requireSession();
   const cookieStore = await cookies();
 

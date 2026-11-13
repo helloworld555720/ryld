@@ -256,9 +256,18 @@ those files; re-run the CLI instead.
   with `redirect: "manual"` and an exact host allowlist; the browser receives a `303`.
   Providers are declared in `lib/connections.ts` and generated into the BFF allowlist, so a
   provider cannot exist in the UI without an explicit endpoint and consent host.
-- **2026-11-14** — API service dev URL is `http://localhost:8000`. Its `/connect/youtube`
-  currently fails at Google with `redirect_uri_mismatch` (upstream OAuth client config); the
-  redirect path on our side is verified through to `accounts.google.com`.
+- **2026-11-14** — API service dev URL is `http://localhost:8000`. `GET /connect/youtube`
+  now redirects to Google's sign-in/consent screen (verified 2026-11-14; the earlier
+  `redirect_uri_mismatch` is resolved). The BFF path is verified end to end:
+  authenticated → `303` + `Location: https://accounts.google.com/...`, anonymous → `307` to
+  sign-in, unknown provider or traversal → `404`. Google's client display name is still
+  "rayload", and the upstream `state` is the user id rather than a random nonce — both are
+  API-service concerns, recorded in `docs/api-inventory.md`.
+- **2026-11-14** — `app/(app)/layout.tsx` awaits `connection()` before rendering the shell.
+  The shell imports better-auth's client, whose store reads `Date.now()`; under
+  cacheComponents that is an unstable value if the subtree is ever prerendered, and dev
+  reports it as a blocking-prerender error. The area is session-gated, so request-time
+  rendering is correct rather than a workaround.
 
 ## 11. Deferred / follow-ups
 

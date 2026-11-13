@@ -50,12 +50,17 @@ Notes for the frontend:
 `/users/{id}` exists (`422` when `{id}` is not a UUID), so the upstream user resource is
 keyed by UUID — the auth service's user ids are not UUIDs. Not used by this repo yet.
 
-## Known blocker (upstream)
+## Upstream OAuth client (resolved 2026-11-14)
 
-Google currently rejects the consent URL with `redirect_uri_mismatch` for the client id
-above: `http://localhost:8000/oauth/youtube/callback` is not registered on
-the Google OAuth client, or the local API is using production credentials. Fix belongs to
-the API service owner; our side of the redirect was verified end to end.
+Google now accepts the consent URL: immediately after the `303`, the browser lands on
+Google's sign-in screen ("to continue to rayload"), so `redirect_uri_mismatch` is gone.
+The app display name configured on the OAuth client is **rayload**, not Ryld — worth
+aligning for user-facing consent.
+
+The `state` parameter is still the **auth service user id**, not a random per-flow value.
+That is the API service's design and we do not touch it, but an unpredictable `state`
+validated against the session is the standard CSRF defence for an OAuth callback; flag it
+to the API owner.
 
 ## Frontend contract
 
