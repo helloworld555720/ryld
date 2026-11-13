@@ -87,84 +87,106 @@ const res = await fetch(`${AUTH_SERVICE_URL}/api/auth/token`, {
 | Rate limiting | present: repeated `sign-in/email` attempts return `429` (no `RateLimit-*` headers observed) |
 | `POST /delete-user` | `404` even with a valid session — endpoint is disabled (`user.deleteUser.enabled: false`) |
 
-## Duplicate accounts: **allowed** (verified 2026-11-13)
+## Duplicate accounts: **rejected, but disguised as success** (verified 2026-11-13)
 
-Direct against the auth service, three sequential `POST /api/auth/sign-up/email` calls with the
-**same** email (one of them uppercase, normalized to lowercase in storage) all returned `200`
-and created three distinct users:
+> Correction to an earlier reading: three sign-ups for the same email returned `200` with three
+> distinct ids, which looked like three users. The database has **one** row. Better-auth was
+> rejecting the duplicates all along and answering with a fabricated user — an anti-enumeration
+> measure. The API response cannot tell you whether an account exists; only the DB can.
 
-| Attempt | Stored email | User id |
+The mechanism (`better-auth/dist/api/routes/sign-up.mjs:155`):
+
+```js
+const shouldReturnGenericDuplicateResponse =
+  ctx.context.options.emailAndPassword.requireEmailVerification ||
+  ctx.context.options.emailAndPassword.autoSignIn === false;
+
+const dbUser = await ctx.context.internalAdapter.findUserByEmail(normalizedEmail);
+if (dbUser?.user) {
+  if (shouldReturnGenericDuplicateResponse) return buildGenericDuplicateResponse(); // 200, no write
+  throw APIError.from("UNPROCESSABLE_ENTITY", BASE_ERROR_CODES.USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL);
+}
+```
+
+`buildGenericDuplicateResponse()` (`:159`) invents an id, sets `createdAt`/`updatedAt` to *now*,
+returns `token: null`, and writes nothing. A unique-constraint violation on a racing insert is
+masked the same way (`:233`), so the DB is the only source of truth.
+
+| Attempt | Response | Persisted? |
 | --- | --- | --- |
-| 1 (lowercase) | `probe-dup-20261113220820@example.com` | `FK2lcG4YVOqtxcxE4X75sjBZP71CyEEm` |
-| 2 (identical body, ~1.3 s later) | same | `2KfCOFG83d8DXLDmG9NlsMaSEBWQhJE4` |
-| 3 (uppercase body) | same (lowercased) | `uvXU21uEXcRrySz6CZbV840fhfROywBi` |
+| 1 (lowercase) | `200`, `id=FK2lcG4YVOqtxcxE4X75sjBZP71CyEEm`, `token: null` | **yes** — the only row |
+| 2 (identical body, ~1.3 s later) | `200`, `id=2KfCOFG83d8DXLDmG9NlsMaSEBWQhJE4`, `token: null` | no — synthetic |
+| 3 (uppercase body) | `200`, `id=uvXU21uEXcRrySz6CZbV840fhfROywBi`, `token: null` | no — synthetic |
 
-Two separate defects, one fix each:
+Tells that were already in the capture: all three responses were exactly 242 bytes, every
+`createdAt` equalled its request time, `token` was `null` even on the real creation, and **no
+`Set-Cookie` was ever returned**. A real sign-up that auto-signed-in would set a session cookie.
 
-1. **No unique constraint on `user.email` in the database.** This is proven, not inferred: three
-   inserts of the identical value committed. better-auth's own `coreSchema` declares
-   `email: { unique: true }` (`@better-auth/core/dist/db/get-tables.mjs`), so the table was
-   created without the constraint (hand-written SQL, a schema push that dropped it, or a
-   non-better-auth migration).
-2. **The application-level duplicate check did not fire.** Stock better-auth calls
-   `internalAdapter.findUserByEmail(normalizedEmail)` and throws
-   `422 USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL` (`better-auth/dist/api/routes/sign-up.mjs`).
-   Attempt 2 posted a byte-identical body and still created a new user, so either the service
-   exposes a custom sign-up handler that skips the check, or the lookup path cannot see the
-   row written ~1 s earlier (read replica / negative cache). Find out which from the service's
-   code — but the unique index is what makes it impossible either way.
+Which flag is set, and which is not:
 
-**Also observed:** `emailVerified: false` accounts can sign in and receive a session. The JWT
-then carries `email_verified: false`. So `requireEmailVerification` is effectively off.
+- `requireEmailVerification` is **off**. Sign-in enforces it (`sign-in.mjs:338`), and a `200` +
+  session cookie was returned for `emailVerified: false`; the JWT carried `email_verified: false`.
+- Therefore `autoSignIn: false` is what makes the duplicate response generic. It also explains
+  `token: null` on the successful sign-up: a new account must sign in explicitly.
 
-**Impact:** the second and later accounts for an email shadow the first; whoever registers an
-address first does not own it, and password reset would pick one of the duplicates
-non-deterministically. Treat as a security bug in the auth service, not a UI issue.
+**Still a real finding:** unverified accounts are fully usable (`requireEmailVerification` off).
+Whether that is a bug depends on policy — see below. Rate limiting is enabled (`429` observed).
 
-## Remediation — auth service (owner: auth service, not this repo)
+**Verify the invariant directly** (do this instead of trusting the API response):
 
-1. **Dedupe, then constrain** (mandatory; fixes the class of bug):
-   ```sql
-   -- find duplicates (case-insensitive, since emails are stored lowercased)
-   SELECT lower(email) AS email, count(*)
-   FROM "user" GROUP BY 1 HAVING count(*) > 1;
+```sql
+SELECT id, email, email_verified, created_at
+FROM "user" WHERE email = 'probe-dup-20261113220820@example.com';   -- expect exactly 1
 
-   -- keep one per email (e.g. the verified one, else the oldest), delete the rest
-   -- for each duplicate: sessions -> accounts -> user, in that order
-   DELETE FROM session WHERE "userId" IN (SELECT id FROM "user" WHERE id = $victim);
-   DELETE FROM account WHERE "userId" IN (SELECT id FROM "user" WHERE id = $victim);
-   DELETE FROM "user" WHERE id = $victim;
+SELECT indexname, indexdef FROM pg_indexes
+WHERE tablename = 'user' AND indexdef ILIKE '%email%';              -- expect a UNIQUE index
+```
 
-   CREATE UNIQUE INDEX "user_email_unique" ON "user" (lower(email));
-   ```
-   Re-running better-auth's own migrate/`generate` would also emit this index; the `lower(email)`
-   form additionally makes `Foo@x` and `foo@x` collide at the DB level, which matches
-   better-auth's lowercase normalization.
-2. **Keep the app-level check and map the DB error.** Catch the unique violation on user create
-   and return `USER_ALREADY_EXISTS` so concurrent sign-ups get a clean 422 instead of a 500.
-3. **Turn email verification on for real**, if accounts should not be usable before verifying:
+## Hardening options — auth service (policy choices, not bug fixes)
+
+Nothing here is required to stop duplicates; that already holds. Pick by policy:
+
+1. **Keep the generic duplicate response.** It is deliberate: without it, sign-up becomes an
+   account-existence oracle. Do not "improve" it into `USER_ALREADY_EXISTS` on a shared service.
+   If you want the notification, use `emailAndPassword.onExistingUserSignUp({ user })` — it fires
+   on the duplicate path only, server-side, without telling the requester anything.
+2. **Confirm the unique index exists** (query above). Better-auth's `coreSchema` declares
+   `email: { unique: true }` (`@better-auth/core/dist/db/get-tables.mjs:160`). A `lower(email)`
+   unique index additionally collapses `Foo@x` / `foo@x` at the DB level, matching better-auth's
+   lowercase normalization. Cheap defense in depth, not urgent given the observed behaviour.
+   If a duplicate row ever *is* found: delete sessions → accounts → user for the extra rows,
+   then create the index.
+3. **Decide on verification.** If unverified accounts must not be usable:
    ```ts
-   emailAndPassword: { enabled: true, requireEmailVerification: true },
+   emailAndPassword: { requireEmailVerification: true },
    emailVerification: {
-     sendVerificationEmail: async ({ user, url }) => { /* wire a real mailer */ },
+     sendVerificationEmail: async ({ user, url }) => { /* real mailer */ },
      sendOnSignUp: true,
    },
    ```
-   `requireEmailVerification` only blocks sign-in when `sendVerificationEmail` is implemented.
+   `requireEmailVerification` only blocks sign-in when `sendVerificationEmail` is implemented
+   (`sign-in.mjs:338-350`); without it, sign-in throws `EMAIL_NOT_VERIFIED` for everyone.
 4. **Close registration** if only known people may have accounts (internal tool):
    ```ts
    emailAndPassword: { enabled: true, disableSignUp: true },
    ```
    Accounts are then created by an admin (admin plugin `createUser`) or a seed script. This
    returns `EMAIL_PASSWORD_SIGN_UP_DISABLED` and is authoritative regardless of the UI.
-5. **Defense in depth — domain allowlist** in `databaseHooks.user.create.before`: reject
-   addresses outside the company domain, and normalize `email` to lowercase there.
+5. **Optional domain allowlist** in `databaseHooks.user.create.before`: reject addresses outside
+   the company domain, and normalize `email` to lowercase there.
 
 ## Frontend consequences (this repo)
 
-The UI is not the control — the steps above are. But to avoid offering a dead-end form:
-remove `signUp` from the allowlist in `app/auth/[path]/page.tsx` once the service closes
-registration, so `/auth/sign-up` 404s instead of rendering a form that always fails.
+The UI is not the control — the service is. Two concrete consequences:
+
+1. **Sign-up can return `200` without creating anything** (existing email → synthetic user). So
+   the sign-up screen must not claim "account created, you can sign in now" in a way that
+   distinguishes an existing address from a new one. Show the same neutral "check your email /
+   sign in" message on both paths — that is the whole point of the generic response. Never add
+   client-side "this email is taken" logic; it would rebuild the oracle the service removed.
+2. **If registration is closed**, remove `signUp` from the allowlist in
+   `app/auth/[path]/page.tsx` so `/auth/sign-up` 404s instead of rendering a form that always
+   fails. Until then, keep the form: it is the only way to create the first account.
 
 **Cookie gotcha:** if the auth service ever decides it is on HTTPS it emits
 `__Secure-`-prefixed cookies, which `http://localhost` drops silently. Keep dev on HTTP,

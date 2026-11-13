@@ -13,17 +13,21 @@ against the live auth service: GET passthrough, POST body forwarding, `Origin` f
 but needs a real login. T1.6, Phase 2+ not started. `API_URL` is a placeholder
 (`http://localhost:3001`).
 
-> **Blocking upstream finding (2026-11-13):** the auth service accepts duplicate
-> `sign-up/email` calls for the same address (three users created for one email) and
-> `emailVerified: false` accounts can sign in. Both are defects in the auth service, not
-> this repo. Details, evidence and remediation SQL/config: `docs/auth-contract.md`
-> ("Duplicate accounts" + "Remediation — auth service"). Do not close sign-up in the UI
-> and call it fixed — the service must enforce it.
+> **Correction (2026-11-13):** an earlier note here claimed the auth service allowed duplicate
+> emails. It does **not**. Three `sign-up/email` calls for one address returned `200` with three
+> ids, but only the first created a user — better-auth 1.7 answers duplicates with a fabricated
+> user (`sign-up.mjs:155`, anti-enumeration) and writes nothing. The DB has one row. Consequence
+> for us: a `200` from sign-up does **not** mean an account was created, so the UI must show the
+> same neutral message for both paths. Details: `docs/auth-contract.md`.
+>
+> **Open upstream question:** `requireEmailVerification` is off (unverified accounts can sign in
+> and get a JWT with `email_verified: false`). Policy decision for the auth service, not a bug we
+> can fix here.
 
-> **Cleanup owed in the auth-service database:** probe users created during that test —
-> `probe-dup-20261113220820@example.com` (ids `FK2lcG4YVOqtxcxE4X75sjBZP71CyEEm`,
-> `2KfCOFG83d8DXLDmG9NlsMaSEBWQhJE4`, `uvXU21uEXcRrySz6CZbV840fhfROywBi`). Self-service
-> delete is disabled (`/delete-user` → 404), so it needs SQL.
+> **Cleanup owed in the auth-service database:** one probe user from that test —
+> `probe-dup-20261113220820@example.com`, id `FK2lcG4YVOqtxcxE4X75sjBZP71CyEEm`. Self-service
+> delete is disabled (`/delete-user` → `404`), so it needs SQL. The other two ids returned by
+> sign-up were synthetic and were never persisted.
 
 ---
 
@@ -205,22 +209,24 @@ sign-in with the current path. Sign-out button clears the query cache, calls
 **Accept:** deleting the session cookie mid-session and clicking around lands on sign-in
 once, with no error toasts; sign-out leaves no cached user data.
 
-### [ ] T1.7 — Sign-up posture (blocked on the auth service)
-**Deps:** auth service fix · **Est:** 20m — *UI-side mirror of an upstream decision*
+### [ ] T1.7 — Sign-up messaging + posture
+**Deps:** none · **Est:** 40m — *corrected after the duplicate-email finding*
 
-The auth service currently allows duplicate emails and unverified sign-in (see
-`docs/auth-contract.md`). Once it is fixed, mirror the chosen posture here:
+Sign-up returns `200` for an **existing** email without creating anything (better-auth's generic
+duplicate response). Anything we render must therefore be identical for both paths:
 
-- **Registration closed:** drop `signUp` (and `sign-up` aliases) from `viewPaths.auth` in
-  `app/auth/[path]/page.tsx` so `/auth/sign-up` → `404`, and hide the "Create account" link
-  on the sign-in screen.
-- **Registration open but verified:** keep the form; ensure the "check your email" state is
-  reachable, and do not auto-redirect to `/dashboard` on sign-up (the session is not usable
-  until verification).
+- Sign-up success copy must not imply "your account was created" in a way that differs from the
+  duplicate path; prefer one neutral message ("If that address is available, check your email or
+  sign in").
+- No client-side "email already registered" logic anywhere — that recreates the enumeration
+  oracle the service deliberately removed.
+- If `autoSignIn` is `false` (as it appears to be), sign-up never returns a session, so do not
+  auto-redirect to `/dashboard` after sign-up; route to sign-in instead.
+- **If registration gets closed** (`disableSignUp: true`): drop `signUp` from `viewPaths.auth` in
+  `app/auth/[path]/page.tsx` so `/auth/sign-up` → `404`, and hide the "Create account" link.
 
-**Accept:** a wrong-path visit 404s instead of rendering a form that always fails, and the
-UI matches the service's actual policy. Sign-up must remain blocked server-side regardless
-of what the UI shows.
+**Accept:** submitting an existing email and a fresh email produces the same visible outcome;
+sign-up never lands on `/dashboard` without a session. Server remains authoritative.
 
 ---
 
