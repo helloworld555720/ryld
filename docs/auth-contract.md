@@ -210,6 +210,7 @@ Next dev on `http://localhost:3000`, proxy at `app/api/auth/[...all]/route.ts`.
 Response headers on every proxied call: `cache-control: no-store`, upstream
 `content-type` preserved, no CORS headers (not needed, same-origin).
 
-**Still unverified:** the `Set-Cookie` pass-through on a successful login (needs a real
-account) and therefore the final `narrowSetCookie` behaviour in the wild — unit tests cover
-domain stripping and `Path=/` forcing, but not a live browser cookie jar.
+**Verified in a browser (2026-11-13, T1.4):** sign up → sign in → sign out all work through the
+proxy, which proves the `Set-Cookie` hop end to end — the browser accepted the session cookie
+minted at `localhost:8080` and narrowed by our proxy, then reused it. Unit tests still cover the
+narrowing rules (Domain stripped, `Path=/` forced, other attributes preserved).
