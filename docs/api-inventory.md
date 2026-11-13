@@ -43,6 +43,43 @@ Notes for the frontend:
 - The browser must follow this redirect itself — the BFF must not fetch the consent page.
   The BFF therefore forwards the `Location` after validating its host.
 
+## `GET /oauth/youtube/callback`
+
+This is the `redirect_uri` configured on the Google client — an **API route**, not ours.
+Probed 2026-11-14:
+
+| Request | Result |
+| --- | --- |
+| no `Authorization` | `401` + `www-authenticate: Bearer` + `{"detail":"Missing bearer token"}` |
+| invalid bearer | `401` + `{"detail":"Invalid or expired token"}` |
+| valid bearer, no query | `422` — requires `code`, `state`, `iss`, `scope` |
+| valid bearer, non-UUID `state` | `422` — `state` must be a UUID |
+| valid bearer, UUID `state`, fake `code` | `404` + `{"detail":"User not found"}` — the user is looked up by `state`, not by the token subject |
+| `POST` | `405` |
+
+### Why the flow cannot complete today
+
+1. **The browser cannot send a Bearer token.** Google redirects the browser to the
+   `redirect_uri`; the JWT never leaves our server (invariant §5.2) and a top-level
+   navigation cannot carry an `Authorization` header. The callback therefore `401`s before
+   any code exchange.
+2. **The state type does not match.** `GET /connect/youtube` emits
+   `state=<auth user id>` (e.g. `UrJz…`, 32 chars, **not** a UUID), while the callback
+   validates `state` as a UUID and looks the user up by it. The API rejects the state its
+   own connect endpoint produced, so even a hand-supplied token gets `422`.
+
+### Options
+
+- **A — callback through the BFF (fits this repo).** Register
+  `http://localhost:3000/api/backend/oauth/youtube/callback` as Google's `redirect_uri` and
+  add a BFF callback route that requires the session, mints the JWT, forwards
+  `code/state/iss/scope` to the API callback, then `303`s to `/connections`. The browser
+  stays same-origin and the token stays server-side. Requires the API to emit (and accept)
+  a UUID state — and preferably a random single-use value instead of the user id.
+- **B — token-free callback (upstream fix).** Identify the user from a signed, single-use
+  `state` and redirect back to the frontend. Simpler for the API, but the browser then
+  touches the API origin directly, which this repo avoids everywhere else.
+
 ## Probed and absent
 
 `404` for `/`, `/health`, `/connections`, `/me`, `/connect`, `/auth/me`.
@@ -70,8 +107,9 @@ to the API owner.
 
 ## Open questions
 
-1. What URL does the OAuth callback redirect the browser to after consent? We need it to
-   show a success/error state on `/connections`.
+1. What does a successful OAuth callback return? Today it is an API route that requires a
+   bearer token and a UUID `state`, so the browser cannot reach it at all (see the callback
+   section above). Until that changes, `/connections` has no success/error state to show.
 2. Is there a connections-list endpoint (to show "Connected" and offer Disconnect)?
 3. Are there other providers besides YouTube? The UI reads `lib/connections.ts`; each new
    provider needs a BFF allowlist entry and its `allowedRedirectHosts`.

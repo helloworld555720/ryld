@@ -279,6 +279,13 @@ those files; re-run the CLI instead.
 - **2026-11-14** — Hard scope rule (§0): agents and humans work only inside this
   repository. Harness-managed scratch (screenshots, command output) is the sole, write-only
   exception; anything else outside the root is out of bounds, and ambiguity means asking.
+- **2026-11-14** — `GET /oauth/youtube/callback` on the API service is **not reachable by
+  the browser**: it requires a Bearer JWT (impossible on a top-level redirect) and a
+  UUID `state`, while `/connect/youtube` emits the non-UUID auth user id. The YouTube flow
+  therefore stops at the callback. Two options are recorded in `docs/api-inventory.md`:
+  route the callback through the BFF (preferred, keeps the browser same-origin) or make the
+  callback token-free upstream. Not implemented yet — it depends on Google's registered
+  `redirect_uri` and the API's state format.
 - **2026-11-14** — `app/(app)/layout.tsx` awaits `connection()` before rendering the shell.
   The shell imports better-auth's client, whose store reads `Date.now()`; under
   cacheComponents that is an unstable value if the subtree is ever prerendered, and dev
