@@ -54,7 +54,7 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
 
 ```
 app/
-  (auth)/auth/…            better-auth-ui screens (sign-in, sign-up, forgot/reset, verify)
+  auth/[path]/             better-auth-ui screens (sign-in, sign-up, forgot/reset, verify)
   (app)/                   authenticated area: layout guard + shell
   api/auth/[...all]/       auth proxy route handler
   api/backend/[...path]/   BFF proxy, allowlist-only
@@ -63,6 +63,7 @@ components/
   ui/                      shadcn primitives (generated, don't hand-edit upstream files)
   app/                     shell, nav, page-header, empty/error states
   auth/                    better-auth-ui components (generated)
+  providers.tsx            QueryClient + AuthProvider (client boundary)
 lib/
   auth/client.ts           createAuthClient() — same-origin, default basePath /api/auth
   auth/server.ts           getSession(), requireSession(), getAccessToken()
@@ -72,7 +73,7 @@ lib/
   env.ts                   zod-validated env, server/public split
   errors.ts                ApiError, error mapping, safe messages
   redirect.ts              safeRedirect() — same-origin relative paths only
-providers/                 QueryProvider, theme/auth providers
+  query-client.ts          one QueryClient per request / browser singleton
 docs/
   auth-contract.md         verified auth service facts (Task T0.1)
   api-inventory.md         verified endpoints/payloads (Task T0.2)
