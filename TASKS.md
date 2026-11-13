@@ -378,8 +378,8 @@ row.
 **Deps:** T0.7 · **Est:** 1.5h — **done 2026-11-13, enforced (not report-only)**
 
 `lib/csp.ts` builds the policy as a pure function (unit-tested, 10 cases); `proxy.ts` issues a
-fresh 128-bit nonce per request and sets the header on both the request and the response,
-including on the anonymous `/dashboard` redirect.
+fresh crypto-random nonce (`crypto.randomUUID()`, 122 bits) per request and sets the header on
+both the request and the response, including on the anonymous `/dashboard` redirect.
 
 Shipped policy:
 `default-src 'self'` · `script-src 'self' 'nonce-…' 'strict-dynamic'` (no `unsafe-inline`, no

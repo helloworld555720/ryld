@@ -10,7 +10,11 @@ export interface CspOptions {
   isDev: boolean;
 }
 
-/** 128 bits of randomness, base64 — CSP nonces must be unguessable per response. */
+/**
+ * 122 bits of crypto randomness (`crypto.randomUUID()` is a v4 UUID), base64.
+ * A nonce only needs to be unguessable for the lifetime of one response, so
+ * this is ample; the important property is that it is never reused.
+ */
 export function newNonce(): string {
   return Buffer.from(crypto.randomUUID()).toString("base64");
 }
