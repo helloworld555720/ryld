@@ -74,6 +74,8 @@ lib/
   errors.ts                ApiError, error mapping, safe messages
   redirect.ts              safeRedirect() — same-origin relative paths only
   csp.ts                   nonce-based Content-Security-Policy (pure, unit-tested)
+  nav.ts                   nav registry (Home, Connections)
+  ui-prefs.ts              cookie-backed UI preferences (sidebar rail)
   query-client.ts          one QueryClient per request / browser singleton
 docs/
   auth-contract.md         verified auth service facts (Task T0.1)
@@ -237,6 +239,13 @@ those files; re-run the CLI instead.
   so `/` and `/_not-found` are dynamic. Verified: 16/16 rendered script tags carry the nonce.
 - **2026-11-13** — Deployment (Phase 6) deferred by the owner; Docker/standalone smoke is not
   part of the current scope.
+- **2026-11-14** — App shell follows the Cloudflare dashboard reference: near-black canvas,
+  a darker sidebar, hairline borders, and a raised pill for the active row. Two destinations
+  only — Home and Connections. `/dashboard` is kept as a redirect to `/home`.
+- **2026-11-14** — The sidebar rail preference is a cookie (`ryld_sidebar`), not
+  localStorage, so `app/(app)/layout.tsx` can render the first paint at the right width. The
+  shell is a client component only where it needs state (collapse, search, drawer); page
+  content stays server-rendered.
 
 ## 11. Deferred / follow-ups
 

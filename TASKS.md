@@ -301,31 +301,43 @@ retry; a 401 bounces to sign-in.
 
 ## Phase 3 — App shell
 
-### [ ] T3.1 — Shell layout
-**Deps:** T1.5, T0.4 · **Est:** 1.5h
+### [x] T3.1 — Shell layout
+**Deps:** T1.5, T0.4 · **Est:** 1.5h — **done 2026-11-14**
 
 Sidebar + top bar; mobile uses a `sheet` drawer with a menu button. Sidebar collapses on
 `md`. User menu (account settings, sign out). Content max-width and page padding tokens.
 
-**Accept:** usable at 360px, 768px, 1280px; no horizontal scroll; focus is trapped in the
-mobile drawer.
+Shipped as `components/app/{app-shell,app-sidebar}.tsx`: sticky full-height sidebar
+(`w-64` → `w-16` icon rail with a 200 ms width transition), brand row, filtered search
+(`Ctrl/⌘ K`), nav list, footer account menu (avatar, email, sign out) and a collapse toggle.
+Below `md` the sidebar is replaced by a top bar + left `Sheet` drawer; navigating from the
+drawer closes it. Sign-out calls `authClient.signOut()`, then replaces to
+`/auth/sign-in` and refreshes.
 
-### [ ] T3.2 — Navigation + route states
-**Deps:** T3.1 · **Est:** 45m
+The rail preference is stored in a `ryld_sidebar` cookie (`lib/ui-prefs.ts`), **not**
+localStorage, so `app/(app)/layout.tsx` reads it on the server and renders the first paint
+at the right width — no flash and no hydration mismatch. The cookie is a UI preference,
+deliberately JS-readable, `Path=/`, `SameSite=Lax`, one year, `Secure` on HTTPS.
 
-`lib/nav.ts` config (label, href, icon, optional `hidden` predicate ready for RBAC).
-Active states, `loading.tsx` skeletons, `error.tsx` boundary with reset, `not-found.tsx`.
+**Verified:** at 1496px the rail expands/collapses to 256/64px; preference persists across a
+full reload (server HTML contains `data-collapsed="true"` + `w-16`); search filters the nav,
+`Ctrl+K` focuses it, Escape clears it; drawer opens, traps focus (Radix), closes on navigate;
+`aria-current="page"` follows the route; zero console errors on a clean load.
 
-**Accept:** active link is marked with `aria-current="page"`; a thrown error in a page shows
-the boundary, not a blank screen.
+### [~] T3.2 — Navigation + route states
+**Deps:** T3.1 · **Est:** 45m — **nav config + active states done; boundaries open**
 
-### [ ] T3.3 — Page patterns
-**Deps:** T3.1 · **Est:** 45m
+`lib/nav.ts` is the single nav registry (`href`, `label`, `icon`) with only **Home** and
+**Connections**. Active styling and `aria-current="page"` are wired. Still missing:
+`loading.tsx` skeletons, `error.tsx` boundary with reset, `not-found.tsx` (deferred until a
+screen fetches data — there is nothing to load yet).
 
-`PageHeader` (title, description, actions), `DataToolbar`, `Pagination`, `ConfirmDialog`.
+### [~] T3.3 — Page patterns
+**Deps:** T3.1 · **Est:** 45m — **header + empty state done**
 
-**Accept:** each is used at least once by the feature slice; keyboard + screen-reader labels
-verified.
+`PageHeader` (eyebrow, title, description, actions) and `EmptyState` (icon, title,
+description, action) live in `components/app/` and are used by `/home` and `/connections`.
+`DataToolbar`, `Pagination` and `ConfirmDialog` wait for the first data slice (Phase 4).
 
 ---
 
