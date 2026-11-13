@@ -45,6 +45,10 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
 
 - The browser only ever talks to this app's origin. Cookies are first-party, so no
   `SameSite=None`, no CORS, no cross-site cookie partitioning problems.
+- OAuth start (`/api/backend/connect/:provider`) is a BFF **redirect**, not a JSON call:
+  the API's 3xx is fetched with `redirect: "manual"`, the `Location` host is checked against
+  `lib/connections.ts`, and only then handed to the browser as a `303`. Never let the
+  browser call the API service directly, and never follow the consent URL server-side.
 - The JWT is minted **per request, server-side**: read the session cookie →
   `GET {AUTH_SERVICE_URL}/api/auth/token` → `{ token }` → attach as Bearer.
   (Verified: the endpoint is GET-only; a POST returns a bare 404.)
@@ -69,6 +73,8 @@ lib/
   auth/server.ts           getSession(), requireSession(), getAccessToken()
   api/server.ts            apiFetch(), parse with zod, error normalisation
   api/endpoints.ts         typed endpoint registry (the BFF allowlist)
+  api/redirect.ts          host allowlist for upstream 3xx (OAuth start)
+  connections.ts           connection providers + consent hosts
   api/schemas/             zod schemas for upstream payloads
   env.ts                   zod-validated env, server/public split
   errors.ts                ApiError, error mapping, safe messages
@@ -165,8 +171,8 @@ NEXT_PUBLIC_APP_NAME=Ryld
 
 `lib/env.ts` validates lazily on first use (so `next build` doesn't need runtime config)
 and throws on missing/malformed values. Local dev points at `http://localhost:8080` for
-auth (verified reachable, `basePath=/api/auth`) and `http://localhost:3001` as a
-**placeholder** for the API until its real dev port is confirmed. `.env.example` is
+auth (verified reachable, `basePath=/api/auth`) and `http://localhost:8000` for the API
+(verified 2026-11-14: FastAPI/uvicorn, `/openapi.json` disabled). `.env.example` is
 committed; `.env*` is not.
 
 **Dev gotcha to verify (T0.1):** if the auth service sets `__Secure-`-prefixed cookies
@@ -246,6 +252,13 @@ those files; re-run the CLI instead.
   localStorage, so `app/(app)/layout.tsx` can render the first paint at the right width. The
   shell is a client component only where it needs state (collapse, search, drawer); page
   content stays server-rendered.
+- **2026-11-14** — Connection OAuth starts through the BFF (`/api/backend/connect/:provider`)
+  with `redirect: "manual"` and an exact host allowlist; the browser receives a `303`.
+  Providers are declared in `lib/connections.ts` and generated into the BFF allowlist, so a
+  provider cannot exist in the UI without an explicit endpoint and consent host.
+- **2026-11-14** — API service dev URL is `http://localhost:8000`. Its `/connect/youtube`
+  currently fails at Google with `redirect_uri_mismatch` (upstream OAuth client config); the
+  redirect path on our side is verified through to `accounts.google.com`.
 
 ## 11. Deferred / follow-ups
 

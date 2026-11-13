@@ -12,7 +12,7 @@ against the live auth service: GET passthrough, POST body forwarding, `Origin` f
 (trusted → 401, evil → 403), `no-store`, token endpoint reachable. Sign up / sign in / sign
 out verified in a browser (T1.4, including the live `Set-Cookie` hop). Nonce-based CSP is
 enforced and verified to cover every rendered script (T5.1). T1.6, T1.7, T5.2, Phases 2–4
-open. `API_URL` is still a placeholder (`http://localhost:3001`) and blocks Phase 2.
+open. `API_URL` is `http://localhost:8000` (verified 2026-11-14); the connect flow is wired.
 
 > **Correction (2026-11-13):** an earlier note here claimed the auth service allowed duplicate
 > emails. It does **not**. Three `sign-up/email` calls for one address returned `200` with three
@@ -54,15 +54,13 @@ Probed and recorded in `docs/auth-contract.md`:
 **Accept:** doc lists each item with the verified value. ✅ (cookie/JWT claims remain
 UNKNOWN; capture on the first real login — T1.4.)
 
-### [ ] T0.2 — Inventory the REST API
-**Deps:** none · **Est:** 45m
+### [x] T0.2 — Inventory the REST API
+**Deps:** none · **Est:** 45m — **done 2026-11-14 (connect flow; OpenAPI is disabled)**
 
-Create `docs/api-inventory.md`: base URL, auth header format, error envelope
-(status shape, message field, trace id), pagination/filter conventions, and a table of
-endpoints: method, path, params, request body, response shape, status codes.
-
-**Accept:** at least the endpoints needed for the first feature slice are captured with one
-real example response each. Secrets redacted.
+Created `docs/api-inventory.md`: FastAPI on `:8000`, bearer/JWKS auth, FastAPI's
+`{"detail": ...}` error envelope, CORS enabled but unused, `GET /connect/youtube` → `307`
+to Google (params captured), `405` on POST, `401` without a token, `/openapi.json` 404.
+Endpoints not supplied by the owner are listed as open questions.
 
 ### [x] T0.3 — Scaffold the app
 **Deps:** none · **Est:** 30m — **done 2026-11-13 (Next 16.4.6, React 19.3, Bun 1.4.4)**
@@ -246,27 +244,32 @@ normalises non-2xx into `ApiError` (mapping upstream error envelope from
 **Accept:** tests cover 200/201, 400, 401, 500, timeout, and malformed JSON. No upstream
 body leaks into the thrown message.
 
-### [ ] T2.2 — Endpoint registry (the allowlist)
-**Deps:** T2.1 · **Est:** 45m
+### [x] T2.2 — Endpoint registry (the allowlist)
+**Deps:** T2.1 · **Est:** 45m — **done 2026-11-14 (tests, no server client yet)**
 
-`lib/api/endpoints.ts`: entries `{ id, method, pattern, schema?, mutation? }` where
-`pattern` is a segment matcher (`/items/:id`). Export `matchEndpoint(method, path)`.
-Deny by default; reject encoded traversal (`%2e%2e`, `..`), absolute URLs, and unknown
-methods.
+`lib/api/endpoints.ts`: entries `{ id, method, pattern, params, redirectHosts }`, with
+`matchEndpoint(method, path)` and `buildUpstreamPath(match)`. `:params` match only against
+literal allowlisted values. Segmentation rejects `..`, `%2e%2e`, backslashes, empty
+segments, trailing slashes, query strings, and absolute URLs before any comparison.
+`lib/api/redirect.ts` validates the upstream `Location` (HTTPS, exact host match, no
+credentials, length cap) so a provider cannot turn the BFF into an open redirect.
 
-**Accept:** table-driven tests: exact match, param match, wrong method → null, unknown path
-→ null, `/items/../../admin` → null.
+**Tests:** `tests/api-endpoints.test.ts` (exact/param/wrong method/unknown/traversal/case)
+and `tests/api-redirect.test.ts` (suffix tricks, userinfo, path/query decoys, schemes).
 
-### [ ] T2.3 — BFF proxy route
-**Deps:** T2.2 · **Est:** 1h
+### [~] T2.3 — BFF proxy route
+**Deps:** T2.2 · **Est:** 1h — **redirect mode done; JSON forwarding still open**
 
-`app/api/backend/[...path]/route.ts`: `requireSession()` → `matchEndpoint()` → 404 if
-unmatched → forward through `apiFetch` → JSON response with `Cache-Control: no-store`.
-Cap body at 1 MB. Reject `TRACE`/`CONNECT`. Return `{ error, requestId }` on failure.
+`app/api/backend/[...path]/route.ts` (GET): `requireSession()` → `matchEndpoint()` → 404
+JSON if unmatched → `getAccessToken()` → fetch with `redirect: "manual"` →
+host-validate the `Location` → `303` + `cache-control: no-store`. 401 upstream or an
+expired session redirects to sign-in; a blocked/absent `Location` is a `502`. Errors use
+`{ error: { code, message, requestId } }` and the request id is also returned in
+`x-request-id`. Nothing from the client is forwarded; the bearer is built from our token.
 
-**Accept:** registered endpoint round-trips; unregistered path returns 404 **without**
-hitting the API; a 2 MB body is rejected with 413; no `Authorization` from the client is
-forwarded.
+**Verified:** registered path → `303` to `accounts.google.com`; unregistered provider →
+`404` without an upstream call; POST → `405`; anonymous → `307` to sign-in. Still to do
+when the first JSON endpoint arrives: body forwarding with a 1 MB cap and schema parsing.
 
 ### [ ] T2.4 — Query provider + browser client
 **Deps:** T0.4 · **Est:** 45m
