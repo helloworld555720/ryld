@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/card";
 import type { Connection } from "@/lib/api/schemas/connections";
 import type { ConnectionProvider } from "@/lib/connections";
+import { cn } from "@/lib/utils";
 
 /**
  * One provider with every account attached to it.
@@ -36,10 +37,14 @@ function monogram(id: string): string {
   return id.slice(0, 2).toUpperCase();
 }
 
+/** Rows shown before the list scrolls. Keeps every card the same height. */
+const VISIBLE_ACCOUNTS = 2;
+
 export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
   const Icon = provider.icon;
   const count = accounts.length;
   const isConnected = count > 0;
+  const isScrollable = count > VISIBLE_ACCOUNTS;
 
   return (
     <Card>
@@ -65,7 +70,22 @@ export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
 
       {isConnected ? (
         <CardContent className="px-0">
-          <ul className="border-border/70 divide-border/70 divide-y border-y">
+          {/*
+           * Only two accounts are shown at a time so one provider cannot make
+           * its card arbitrarily taller than its neighbours. More accounts
+           * scroll inside the card; the partly visible third row is the hint,
+           * and the list is focusable so the scroll region is keyboard
+           * reachable (WCAG 2.1.1), not mouse-only.
+           */}
+          <ul
+            tabIndex={isScrollable ? 0 : undefined}
+            aria-label={`${provider.label} accounts`}
+            className={cn(
+              "border-border/70 divide-border/70 divide-y border-y",
+              isScrollable &&
+                "focus-visible:ring-ring max-h-[6.75rem] overflow-y-auto overscroll-contain focus-visible:ring-2 focus-visible:outline-none",
+            )}
+          >
             {accounts.map((account) => (
               <li
                 key={account.id}
