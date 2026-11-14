@@ -1,4 +1,11 @@
-import { HardDrive, SquarePlay, Users, type LucideIcon } from "lucide-react";
+import {
+  AtSign,
+  Camera,
+  HardDrive,
+  SquarePlay,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 
 /**
  * Connection providers the UI offers. Client-safe: no URLs, no secrets.
@@ -64,6 +71,34 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProvider[] = [
     consentHost: "Google",
     issuer: "https://accounts.google.com",
     allowedRedirectHosts: ["accounts.google.com"],
+  },
+  /*
+   * TEMPORARY preview entries — there is no Instagram or X integration
+   * upstream. They exist only so the 3-column grid can be judged with real
+   * card content; Connect on either one fails upstream and shows the error
+   * banner. Delete both blocks (and the AtSign/Camera imports) when the
+   * layout experiment ends.
+   */
+  {
+    id: "instagram",
+    label: "Instagram",
+    description:
+      "Authorize Ryld to access your Instagram professional account.",
+    icon: Camera,
+    category: "socials",
+    consentHost: "Instagram",
+    issuer: "https://www.instagram.com",
+    allowedRedirectHosts: ["www.instagram.com"],
+  },
+  {
+    id: "x",
+    label: "X",
+    description: "Authorize Ryld to access your X account and posts.",
+    icon: AtSign,
+    category: "socials",
+    consentHost: "X",
+    issuer: "https://x.com",
+    allowedRedirectHosts: ["x.com"],
   },
 ];
 
