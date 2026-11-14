@@ -19,24 +19,39 @@ Values here are observations, not assumptions — re-verify before changing the 
 > **The service was refactored on 2026-11-14.** `/connect/:provider` and
 > `/oauth/:provider/callback` no longer exist (`404`). The flow is now
 > `POST /connections/{provider}/start` → provider consent → `POST /connections/{provider}/complete`,
-> with `redirect_uri` supplied per request. Everything below is the post-refactor contract.
+> with `redirect_uri` supplied per request. **All parameters are in the request body**, not
+> the query string (that changed during 2026-11-14 as well). Everything below is the current
+> contract.
 
 ## Endpoints
 
-### `POST /connections/{provider}/start?redirect_uri=<url>`
+### `POST /connections/{provider}/start`
 
-Starts the OAuth flow. `redirect_uri` is a **required query parameter** — the API no longer
-hardcodes its own callback, which is what we asked for.
+Starts the OAuth flow. `redirect_uri` is a **required body parameter**, and the body is a
+**bare JSON string**, not an object:
+
+```http
+POST /connections/youtube/start
+Authorization: Bearer <jwt>
+Content-Type: application/json
+
+"http://localhost:3000/api/backend/oauth/youtube/callback"
+```
+
+> Re-verified 2026-11-14 **after** the first pass: the parameter moved from the query
+> string to the body within the same day. Query-only requests now fail. Always re-probe
+> before wiring a caller.
 
 | Request | Result |
 | --- | --- |
-| Bearer + allowlisted `redirect_uri` | `307` + `location: https://accounts.google.com/...` |
-| Bearer + `https://evil.example.com/cb` | `401` + `{"detail":"invalid redirect uri"}` |
-| Bearer + `http://localhost:8000/oauth/youtube/callback` (the old callback) | `401` + `{"detail":"invalid redirect uri"}` — it is no longer registered |
+| Bearer + JSON string body, allowlisted URI | `307` + empty body + `location: https://accounts.google.com/...` |
+| Bearer + JSON string body, `https://evil.example.com/cb` | `401` + `{"detail":"invalid redirect uri"}` |
+| Bearer + JSON **object** body `{"redirect_uri": "…"}` | `422` — `loc: ["body"]`, `"Input should be a valid string"` |
+| Bearer + form body | `401` + `{"detail":"invalid redirect uri"}` — the raw form string is parsed as the URI |
+| Bearer + **query** `?redirect_uri=…`, no body | `422` — `loc: ["body"]`, `"Field required"` — the query is ignored |
 | no Bearer | `401` + `{"detail":"Missing bearer token"}` |
 | unknown provider (`/connections/evil/start`) | `404` |
 | `GET` | `405` |
-| missing `redirect_uri` | `422` |
 
 Accepted `redirect_uri`: `http://localhost:3000/api/backend/oauth/youtube/callback` — i.e.
 **our** BFF callback (Option A). Verified 2026-11-14.
@@ -61,16 +76,28 @@ location: https://accounts.google.com/o/oauth2/v2/auth
 - Status-code nit: an invalid `redirect_uri` is a client error, so it should be `400`, not
   `401`. `401` implies "authenticate again", which is misleading.
 
-### `POST /connections/{provider}/complete?code&state&iss&scope&redirect_uri`
+### `POST /connections/{provider}/complete`
 
-The code exchange. All five query parameters are required.
+The code exchange. The body is a **JSON object** with five required string fields —
+inconsistently with `start`, which takes a bare string:
+
+```http
+POST /connections/youtube/complete
+Authorization: Bearer <jwt>
+Content-Type: application/json
+
+{"code": "…", "state": "…", "iss": "https://accounts.google.com",
+ "scope": "https://www.googleapis.com/auth/youtube", "redirect_uri": "…"}
+```
 
 | Request | Result |
 | --- | --- |
-| any missing query parameter | `422` listing each missing field |
-| `state` = the user id emitted by `start` + fake `code` | **`500` Internal Server Error** |
+| any missing field | `422` — one entry per field, `loc: ["body", <field>]` |
+| full **query** string, empty body | `422` — the same five `["body", …]` entries; **the query is ignored** |
+| extra unknown field alongside valid ones | accepted by validation (unknown keys ignored), then `500` |
+| `state` = the user id emitted by `start` + fake `code` | **`500` Internal Server Error** (`text/plain`) |
 | `state` = UUID + fake `code` | **`500` Internal Server Error** |
-| `error=access_denied` and no `code` (user cancelled consent) | `422` — `code` is required |
+| `error=access_denied`, no `code` (user cancelled consent) | `422` — `code` is always required |
 
 Two open upstream defects:
 
@@ -125,8 +152,8 @@ Target contract, now that the upstream takes a per-request `redirect_uri`:
 
 | Browser URL | Upstream | Behaviour |
 | --- | --- | --- |
-| `POST /api/backend/connections/youtube/start` | `POST {API_URL}/connections/youtube/start?redirect_uri=<our callback>` | Mints the JWT, `redirect: "manual"`, validates `Location` host, `303`s the browser to Google. |
-| `GET /api/backend/oauth/youtube/callback` | `POST {API_URL}/connections/youtube/complete?…` | Google's `redirect_uri`. Requires the session cookie (survives a cross-site top-level GET under `SameSite=Lax`), mints the JWT, forwards `code/state/iss/scope/redirect_uri`, then `303`s to `/connections?connected=youtube` or `?error=…`. |
+| `POST /api/backend/connections/youtube/start` | `POST {API_URL}/connections/youtube/start` with body `"<our callback>"` | Mints the JWT, `redirect: "manual"`, validates `Location` host, `303`s the browser to Google. Note the bare-string body. |
+| `GET /api/backend/oauth/youtube/callback` | `POST {API_URL}/connections/youtube/complete` with the five-field JSON object | Google's `redirect_uri`. Requires the session cookie (survives a cross-site top-level GET under `SameSite=Lax`), mints the JWT, forwards `code/state/iss/scope/redirect_uri`, then `303`s to `/connections?connected=youtube` or `?error=…`. |
 | `GET /api/backend/connections` | `GET {API_URL}/connections/` | Lists connections so the cards can show "Connected". |
 
 Notes: the browser never reaches the API origin; the JWT stays server-side in both

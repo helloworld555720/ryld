@@ -296,6 +296,11 @@ those files; re-run the CLI instead.
   **broken** (`502`), `state` is still the auth user id, and `complete` answers `500` for
   every `state` a client can obtain today, so the flow still cannot finish. Recorded in
   `docs/api-inventory.md`.
+- **2026-11-14** — `connections/{provider}/*` take their parameters in the **body**:
+  `start` a bare JSON string (the `redirect_uri`), `complete` a JSON object with
+  `code/state/iss/scope/redirect_uri`. The query-string form worked earlier the same day and
+  no longer does, so callers must be re-probed rather than assumed. Recorded in
+  `docs/api-inventory.md`.
 - **2026-11-14** — `app/(app)/layout.tsx` awaits `connection()` before rendering the shell.
   The shell imports better-auth's client, whose store reads `Date.now()`; under
   cacheComponents that is an unstable value if the subtree is ever prerendered, and dev
