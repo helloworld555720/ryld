@@ -64,8 +64,7 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProvider[] = [
   {
     id: "youtube",
     label: "YouTube",
-    description:
-      "Authorize Ryld to access your YouTube account and channel data.",
+    description: "Read your channel and publish videos.",
     icon: SquarePlay,
     category: "socials",
     consentHost: "Google",
@@ -83,7 +82,7 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProvider[] = [
     id: "instagram",
     label: "Instagram",
     description:
-      "Authorize Ryld to access your Instagram professional account.",
+      "Read your profile and publish posts.",
     icon: Camera,
     category: "socials",
     consentHost: "Instagram",
@@ -93,7 +92,7 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProvider[] = [
   {
     id: "x",
     label: "X",
-    description: "Authorize Ryld to access your X account and posts.",
+    description: "Read your timeline and publish posts.",
     icon: AtSign,
     category: "socials",
     consentHost: "X",

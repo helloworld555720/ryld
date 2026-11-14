@@ -55,7 +55,13 @@ export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
           </span>
           <div className="space-y-1">
             <CardTitle>{provider.label}</CardTitle>
-            <CardDescription>{provider.description}</CardDescription>
+            {/*
+             * Fixed two lines: descriptions differ in length, and a card that
+             * wraps to three lines would be taller than its neighbours.
+             */}
+            <CardDescription className="line-clamp-2 min-h-10">
+              {provider.description}
+            </CardDescription>
           </div>
         </div>
 
@@ -68,22 +74,23 @@ export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
         </CardAction>
       </CardHeader>
 
-      {isConnected ? (
-        <CardContent className="px-0">
-          {/*
-           * Only two accounts are shown at a time so one provider cannot make
-           * its card arbitrarily taller than its neighbours. More accounts
-           * scroll inside the card; the partly visible third row is the hint,
-           * and the list is focusable so the scroll region is keyboard
-           * reachable (WCAG 2.1.1), not mouse-only.
-           */}
+      {/*
+       * The account band is a fixed height in both states. A provider with no
+       * accounts gets the same two-row band with a placeholder, so every card
+       * in a row is the same height whether or not something is connected.
+       * Above two accounts the list scrolls inside the card; it is focusable
+       * whenever it scrolls, because a region that only responds to the mouse
+       * fails WCAG 2.1.1.
+       */}
+      <CardContent className="px-0">
+        {isConnected ? (
           <ul
             tabIndex={isScrollable ? 0 : undefined}
             aria-label={`${provider.label} accounts`}
             className={cn(
-              "border-border/70 divide-border/70 divide-y border-y",
+              "border-border/70 divide-border/70 divide-y border-y h-[6.25rem]",
               isScrollable &&
-                "focus-visible:ring-ring max-h-[6.75rem] overflow-y-auto overscroll-contain focus-visible:ring-2 focus-visible:outline-none",
+                "focus-visible:ring-ring overflow-y-auto overscroll-contain focus-visible:ring-2 focus-visible:outline-none",
             )}
           >
             {accounts.map((account) => (
@@ -113,8 +120,14 @@ export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
               </li>
             ))}
           </ul>
-        </CardContent>
-      ) : null}
+        ) : (
+          <div className="border-border/70 flex h-[6.25rem] items-center justify-center border-y px-(--card-spacing)">
+            <p className="text-muted-foreground text-xs">
+              No accounts connected
+            </p>
+          </div>
+        )}
+      </CardContent>
 
       {/*
        * `items-start` on the grid keeps each card at its content height: the
@@ -123,10 +136,15 @@ export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
        * `mt-auto` still pins the footer if a card is ever stretched.
        */}
       <CardFooter className="mt-auto justify-between gap-3">
-        <span className="text-muted-foreground text-xs">
+        {/*
+         * One line, always: the button width differs between states, and a
+         * wrapping label would make connected cards taller than unconnected
+         * ones. Truncation is the guard; the copy is short enough not to need it.
+         */}
+        <span className="text-muted-foreground min-w-0 truncate text-xs">
           {isConnected
-            ? `Authorized through ${provider.consentHost}`
-            : `Opens ${provider.consentHost} to authorize`}
+            ? `Via ${provider.consentHost}`
+            : `Opens ${provider.consentHost}`}
         </span>
 
         <Button

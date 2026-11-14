@@ -330,12 +330,12 @@ those files; re-run the CLI instead.
   state. Both the grouping by `type` and the tab counts are pure helpers in `lib/connections.ts`
   and unit-tested. The provider grid uses `items-start`, so a card is exactly as tall as its
   account list: equal-height rows left a dead region (measured ~200px with 2 accounts beside 6)
-  because account count is user data, not design. The list itself shows two rows and then
-  scrolls (`max-h-[6.75rem]`), so a provider with twenty accounts cannot stretch its card; the
-  list is focusable whenever it scrolls, since a scroll region that only responds to the mouse
-  fails WCAG 2.1.1. Residual height variance is bounded to one list (cards with zero accounts
-  have none) plus description wrapping, so mixed connected/unconnected rows are still ragged by
-  design rather than by data volume.
+  because account count is user data, not design. Every card reserves the same 100px account
+  band — two rows, or a "No accounts connected" placeholder — the description is clamped to two
+  fixed lines, and the footer label is one truncated line, so cards in a row stay the same
+  height regardless of account count. Above two accounts the list scrolls inside the card; it
+  is focusable whenever it scrolls, because a region that only responds to the mouse fails
+  WCAG 2.1.1.
 - **2026-11-14** — `app/(app)/layout.tsx` awaits `connection()` before rendering the shell.
   The shell imports better-auth's client, whose store reads `Date.now()`; under
   cacheComponents that is an unstable value if the subtree is ever prerendered, and dev
