@@ -145,6 +145,10 @@ export default async function ConnectionsPage({
           <p className="text-muted-foreground text-xs">{category.description}</p>
         </div>
 
+        {/*
+         * TEMPORARY preview: three columns instead of two. Revert to
+         * `grid items-start gap-4 lg:grid-cols-2` on request.
+         */}
         {visible.length === 0 ? (
           <EmptyState
             icon={category.icon}
@@ -152,7 +156,7 @@ export default async function ConnectionsPage({
             description={`${category.label} connections aren't available yet. They'll appear here once Ryld supports them.`}
           />
         ) : (
-          <div className="grid items-start gap-4 lg:grid-cols-2">
+          <div className="grid items-start gap-4 lg:grid-cols-3">
             {visible.map((group) => (
               <ConnectionCard
                 key={group.provider.id}
