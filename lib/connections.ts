@@ -64,7 +64,7 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProvider[] = [
   {
     id: "youtube",
     label: "YouTube",
-    description: "Read your channel and publish videos.",
+    description: "Read and publish videos.",
     icon: SquarePlay,
     category: "socials",
     consentHost: "Google",
@@ -81,8 +81,7 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProvider[] = [
   {
     id: "instagram",
     label: "Instagram",
-    description:
-      "Read your profile and publish posts.",
+    description: "Read and publish photos.",
     icon: Camera,
     category: "socials",
     consentHost: "Instagram",
@@ -92,7 +91,7 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProvider[] = [
   {
     id: "x",
     label: "X",
-    description: "Read your timeline and publish posts.",
+    description: "Read and publish posts.",
     icon: AtSign,
     category: "socials",
     consentHost: "X",

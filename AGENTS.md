@@ -335,7 +335,11 @@ those files; re-run the CLI instead.
   fixed lines, and the footer label is one truncated line, so cards in a row stay the same
   height regardless of account count. Above two accounts the list scrolls inside the card; it
   is focusable whenever it scrolls, because a region that only responds to the mouse fails
-  WCAG 2.1.1.
+  WCAG 2.1.1. The band is flush with the footer — the card gap above it is cancelled with
+  `-mt-4`, and the band carries only a top border so there is one hairline, not two. Provider
+  descriptions stay under ~30 characters so they fit two lines at the three-column width;
+  badge width differs between connected and unconnected cards, so the unconnected column is
+  the narrower one to design against.
 - **2026-11-14** — `app/(app)/layout.tsx` awaits `connection()` before rendering the shell.
   The shell imports better-auth's client, whose store reads `Date.now()`; under
   cacheComponents that is an unstable value if the subtree is ever prerendered, and dev

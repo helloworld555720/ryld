@@ -88,7 +88,7 @@ export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
             tabIndex={isScrollable ? 0 : undefined}
             aria-label={`${provider.label} accounts`}
             className={cn(
-              "border-border/70 divide-border/70 divide-y border-y h-[6.25rem]",
+              "border-border/70 divide-border/70 divide-y border-t h-[6.25rem]",
               isScrollable &&
                 "focus-visible:ring-ring overflow-y-auto overscroll-contain focus-visible:ring-2 focus-visible:outline-none",
             )}
@@ -121,7 +121,7 @@ export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
             ))}
           </ul>
         ) : (
-          <div className="border-border/70 flex h-[6.25rem] items-center justify-center border-y px-(--card-spacing)">
+          <div className="border-border/70 flex h-[6.25rem] items-center justify-center border-t px-(--card-spacing)">
             <p className="text-muted-foreground text-xs">
               No accounts connected
             </p>
@@ -134,8 +134,12 @@ export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
        * number of accounts is user data, and stretching a two-account card to
        * match a six-account sibling would leave a large dead region inside it.
        * `mt-auto` still pins the footer if a card is ever stretched.
+       *
+       * `-mt-4` cancels the card's flex gap above the footer (the default card
+       * spacing is `--spacing(4)`): the account band sits flush against the
+       * footer, whose own top border is the only hairline between them.
        */}
-      <CardFooter className="mt-auto justify-between gap-3">
+      <CardFooter className="mt-auto -mt-4 justify-between gap-3">
         {/*
          * One line, always: the button width differs between states, and a
          * wrapping label would make connected cards taller than unconnected
