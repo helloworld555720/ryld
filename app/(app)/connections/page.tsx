@@ -9,10 +9,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { listConnections } from "@/lib/api/connections";
+import type { Connection } from "@/lib/api/schemas/connections";
 import {
   CONNECTION_PROVIDERS,
   getConnectionProvider,
 } from "@/lib/connections";
+import { isApiError } from "@/lib/errors";
+import { log } from "@/lib/log";
 
 export const instant = false;
 
@@ -91,12 +95,34 @@ function NoticeBanner({ notice }: { notice: Notice }) {
   );
 }
 
+async function readConnections(): Promise<Connection[]> {
+  try {
+    return await listConnections();
+  } catch (error) {
+    // The page is still usable without the list: every card can start a fresh
+    // flow. Log the reason and render as "not connected".
+    log("error", "connections.list_failed", {
+      reason: isApiError(error) ? error.code : "UNKNOWN",
+      status: isApiError(error) ? error.status : undefined,
+    });
+    return [];
+  }
+}
+
 export default async function ConnectionsPage({
   searchParams,
 }: {
   searchParams: Promise<ConnectionsSearchParams>;
 }) {
-  const notice = readNotice(await searchParams);
+  const [params, connections] = await Promise.all([
+    searchParams,
+    readConnections(),
+  ]);
+
+  const notice = readNotice(params);
+  const connectedTypes = new Set(
+    connections.map((connection) => connection.type),
+  );
 
   return (
     <div className="space-y-8">
@@ -111,6 +137,7 @@ export default async function ConnectionsPage({
       <div className="grid gap-4 sm:grid-cols-2">
         {CONNECTION_PROVIDERS.map((provider) => {
           const Icon = provider.icon;
+          const isConnected = connectedTypes.has(provider.id);
 
           return (
             <Card key={provider.id} className="justify-between">
@@ -127,10 +154,25 @@ export default async function ConnectionsPage({
               </CardHeader>
 
               <CardFooter className="justify-between gap-3">
-                <span className="text-muted-foreground text-xs">
-                  Opens {provider.consentHost} to authorize
-                </span>
-                <Button asChild size="sm">
+                {isConnected ? (
+                  <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
+                    <span
+                      className="bg-foreground size-1.5 rounded-full"
+                      aria-hidden="true"
+                    />
+                    Connected
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground text-xs">
+                    Opens {provider.consentHost} to authorize
+                  </span>
+                )}
+
+                <Button
+                  asChild
+                  size="sm"
+                  variant={isConnected ? "outline" : "default"}
+                >
                   {/*
                    * Plain anchor, not next/link: this is a route handler that
                    * answers with a 303 to the provider, so the browser must
@@ -138,9 +180,9 @@ export default async function ConnectionsPage({
                    */}
                   <a
                     href={`/api/backend/connections/${provider.id}/start`}
-                    aria-label={`Connect ${provider.label}`}
+                    aria-label={`${isConnected ? "Reconnect" : "Connect"} ${provider.label}`}
                   >
-                    Connect
+                    {isConnected ? "Reconnect" : "Connect"}
                   </a>
                 </Button>
               </CardFooter>

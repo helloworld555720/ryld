@@ -127,11 +127,21 @@ Lists the caller's connections. **Trailing slash matters**: `/connections` answe
 | Request | Result |
 | --- | --- |
 | no Bearer | `401` + `{"detail":"Missing bearer token"}` |
-| Bearer | `200` + `[]` for an account with no connections |
+| Bearer | `200` + array of connections |
 
-The item schema is unknown until a connection actually exists — we cannot create one until
-a real consent completes. This is the endpoint that lets `/connections` render "Connected"
-instead of "Connect".
+Item shape, captured 2026-11-14 from a real YouTube connection:
+
+```json
+[{ "id": "7eb3f330-54cf-476b-a62c-2d5676bc8a59", "type": "youtube" }]
+```
+
+- `type` — **not** `provider` — is the discriminator, and it matches
+  `ConnectionProvider.id`.
+- `id` is the connection's UUID, not the provider's.
+- No channel metadata, scopes or timestamps are exposed, so the card can say
+  "Connected" but cannot name the channel.
+
+This is the endpoint that drives the "Connected" state on `/connections`.
 
 `DELETE /connections/{provider}` → `404`, so there is no disconnect endpoint yet.
 
@@ -164,7 +174,7 @@ Verified against the dev server at 14:04 UTC:
 | --- | --- | --- |
 | `GET /api/backend/connections/youtube/start` | `POST /connections/youtube/start` with `{"redirect_uri": "<origin>/api/backend/oauth/youtube/callback"}` | `303` to the consent screen after the `Location` host check; anonymous → `307` to sign-in; unknown provider or traversal → `404` |
 | `GET /api/backend/oauth/youtube/callback` | `POST /connections/youtube/complete` with `code/state/iss/scope/redirect_uri` | `303` to `/connections?connected=youtube` or `?error=…`; never JSON |
-| `GET /api/backend/connections` | `GET /connections/` | validated JSON, `cache-control: no-store` |
+| `GET /api/backend/connections` | `GET /connections/` | validated JSON, `cache-control: no-store`; items are `{ id, type }` |
 
 Callback outcomes verified: fake code → `?error=youtube_failed`; `error=access_denied` →
 `?error=access_denied`; no session → `?error=session_expired`; missing params →
@@ -177,16 +187,18 @@ not carry it.
 The old `/api/backend/connect/:provider` is gone (`404`). Adding a provider still means one
 registry entry plus its OAuth client credentials upstream — the BFF routes are generated.
 
+`/connections` reads the list server-side (`lib/api/connections.ts`, no HTTP hop back through
+the BFF) and renders "Connected" + "Reconnect" when `type` matches a provider. A failing
+list is logged and treated as empty so the page still renders.
+
 ## Open questions
 
 1. What does `complete` return on **success**? Presumably `{"connected":true}`, plus
    possibly account metadata. Unverifiable until a real consent completes.
-2. What is an item in `GET /connections/`? Needed to render "Connected" and the account
-   label.
-3. Can `complete` report *why* it failed instead of a bare `connected:false`?
-4. Does `complete` validate `iss`? And is the `state` bound to the user who started the
+2. Can `complete` report *why* it failed instead of a bare `connected:false`?
+3. Does `complete` validate `iss`? And is the `state` bound to the user who started the
    flow? Neither is observable while all failures return `200 false`.
-5. Is a disconnect endpoint planned? `DELETE /connections/{provider}` is `404` today.
-6. Are there other providers besides YouTube? Only `youtube` resolves today; the UI reads
+4. Is a disconnect endpoint planned? `DELETE /connections/{provider}` is `404` today.
+5. Are there other providers besides YouTube? Only `youtube` resolves today; the UI reads
    `lib/connections.ts`, and each provider needs a BFF allowlist entry plus its
    `allowedRedirectHosts`.

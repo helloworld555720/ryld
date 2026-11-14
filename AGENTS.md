@@ -91,6 +91,7 @@ lib/
   api/endpoints.ts         typed endpoint registry (the BFF allowlist)
   api/redirect.ts          host allowlist for upstream 3xx (OAuth start)
   api/callback-url.ts      the redirect_uri both hops must agree on
+  api/connections.ts       RSC read of the caller's connections
   api/schemas/             zod schemas for upstream payloads
   connections.ts           connection providers + consent hosts
   env.ts                   zod-validated env, server/public split
@@ -314,6 +315,11 @@ those files; re-run the CLI instead.
   blocker: Google's client still authorizes only
   `http://localhost:8000/oauth/youtube/callback`, so consent answers
   `redirect_uri_mismatch` for our URI.
+- **2026-11-14** — `GET /connections/` returns `[{ "id": "<connection uuid>", "type": "<provider id>" }]`
+  — the discriminator is `type`, not `provider`, and there is no channel metadata. Verified
+  against a real YouTube connection. `/connections` therefore reads the list server-side via
+  `lib/api/connections.ts` (no HTTP hop through our own BFF) and shows "Connected" +
+  "Reconnect"; a failed list read is logged and treated as empty so the page still renders.
 - **2026-11-14** — `app/(app)/layout.tsx` awaits `connection()` before rendering the shell.
   The shell imports better-auth's client, whose store reads `Date.now()`; under
   cacheComponents that is an unstable value if the subtree is ever prerendered, and dev

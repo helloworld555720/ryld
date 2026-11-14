@@ -1,21 +1,31 @@
 import { z } from "zod";
 
 /**
- * Upstream payloads for the connections API. Deliberately loose where the
- * contract is not verified — see `docs/api-inventory.md`.
+ * Upstream payloads for the connections API — see `docs/api-inventory.md`.
  */
 
 /**
- * `GET /connections/`. The list is `[]` until a real consent completes, so the
- * item shape has never been observed. Only "is a JSON array" is enforced for
- * now; tighten this the first time a populated response is captured.
+ * One item of `GET /connections/`. Verified 2026-11-14 against a real YouTube
+ * connection: `{"id": "<uuid>", "type": "youtube"}`.
+ *
+ * `type` — not `provider` — is the discriminator; it matches
+ * `ConnectionProvider.id`. `catchall` so upstream can add account metadata
+ * without taking the page down.
  */
-export const connectionsListSchema = z.array(z.unknown());
+export const connectionSchema = z
+  .object({
+    id: z.string().min(1),
+    type: z.string().min(1),
+  })
+  .catchall(z.unknown());
+
+export type Connection = z.infer<typeof connectionSchema>;
+
+export const connectionsListSchema = z.array(connectionSchema);
 
 /**
  * `POST /connections/:provider/complete` → `{ "connected": false }` for every
- * failure, `{ "connected": true }` on success (assumed; unobserved). Extra keys
- * are allowed so upstream can add account metadata without breaking us.
+ * failure, `{ "connected": true }` on success (assumed; unobserved).
  */
 export const completeResultSchema = z
   .object({ connected: z.boolean() })
