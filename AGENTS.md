@@ -328,7 +328,9 @@ those files; re-run the CLI instead.
   metadata, so each account row is labelled with the first segment of its connection id — the
   only stable identifier upstream gives us. Storage has no providers yet and renders an empty
   state. Both the grouping by `type` and the tab counts are pure helpers in `lib/connections.ts`
-  and unit-tested.
+  and unit-tested. The provider grid uses `items-start`, so a card is exactly as tall as its
+  account list: equal-height rows left a dead region (measured ~200px with 2 accounts beside 6)
+  because account count is user data, not design.
 - **2026-11-14** — `app/(app)/layout.tsx` awaits `connection()` before rendering the shell.
   The shell imports better-auth's client, whose store reads `Date.now()`; under
   cacheComponents that is an unstable value if the subtree is ever prerendered, and dev

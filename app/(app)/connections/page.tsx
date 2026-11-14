@@ -152,7 +152,7 @@ export default async function ConnectionsPage({
             description={`${category.label} connections aren't available yet. They'll appear here once Ryld supports them.`}
           />
         ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid items-start gap-4 lg:grid-cols-2">
             {visible.map((group) => (
               <ConnectionCard
                 key={group.provider.id}

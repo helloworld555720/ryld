@@ -42,7 +42,7 @@ export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
   const isConnected = count > 0;
 
   return (
-    <Card className="justify-between">
+    <Card>
       <CardHeader>
         <div className="flex items-start gap-3">
           <span className="bg-muted text-foreground grid size-10 shrink-0 place-items-center rounded-lg">
@@ -96,7 +96,13 @@ export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
         </CardContent>
       ) : null}
 
-      <CardFooter className="justify-between gap-3">
+      {/*
+       * `items-start` on the grid keeps each card at its content height: the
+       * number of accounts is user data, and stretching a two-account card to
+       * match a six-account sibling would leave a large dead region inside it.
+       * `mt-auto` still pins the footer if a card is ever stretched.
+       */}
+      <CardFooter className="mt-auto justify-between gap-3">
         <span className="text-muted-foreground text-xs">
           {isConnected
             ? `Authorized through ${provider.consentHost}`
