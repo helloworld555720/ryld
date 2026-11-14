@@ -93,7 +93,7 @@ lib/
   api/callback-url.ts      the redirect_uri both hops must agree on
   api/connections.ts       RSC read of the caller's connections
   api/schemas/             zod schemas for upstream payloads
-  connections.ts           connection providers + consent hosts
+  connections.ts           provider + category registry, grouping helpers
   env.ts                   zod-validated env, server/public split
   errors.ts                ApiError, error mapping, safe messages
   redirect.ts              safeRedirect() — same-origin relative paths only
@@ -320,6 +320,15 @@ those files; re-run the CLI instead.
   against a real YouTube connection. `/connections` therefore reads the list server-side via
   `lib/api/connections.ts` (no HTTP hop through our own BFF) and shows "Connected" +
   "Reconnect"; a failed list read is logged and treated as empty so the page still renders.
+- **2026-11-14** — `/connections` is organised for **multiple accounts per provider**:
+  category tabs (Socials, Storage) in `lib/connections.ts`, one card per provider listing every
+  account attached to it, and an "Add another account" action once one exists. Tabs are plain
+  links read from `?tab=` and validated against the registry (unknown → first category), so the
+  page stays a server component with no client state. The list item carries no channel
+  metadata, so each account row is labelled with the first segment of its connection id — the
+  only stable identifier upstream gives us. Storage has no providers yet and renders an empty
+  state. Both the grouping by `type` and the tab counts are pure helpers in `lib/connections.ts`
+  and unit-tested.
 - **2026-11-14** — `app/(app)/layout.tsx` awaits `connection()` before rendering the shell.
   The shell imports better-auth's client, whose store reads `Date.now()`; under
   cacheComponents that is an unstable value if the subtree is ever prerendered, and dev

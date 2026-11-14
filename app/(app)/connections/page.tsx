@@ -1,19 +1,17 @@
-import { CircleCheck, Plus, TriangleAlert } from "lucide-react";
+import { CircleCheck, TriangleAlert } from "lucide-react";
 
+import { ConnectionCard } from "@/components/app/connection-card";
+import { ConnectionTabs } from "@/components/app/connection-tabs";
+import { EmptyState } from "@/components/app/empty-state";
 import { PageHeader } from "@/components/app/page-header";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { listConnections } from "@/lib/api/connections";
 import type { Connection } from "@/lib/api/schemas/connections";
 import {
   CONNECTION_PROVIDERS,
+  countAccountsByCategory,
   getConnectionProvider,
+  groupConnectionsByProvider,
+  resolveConnectionCategory,
 } from "@/lib/connections";
 import { isApiError } from "@/lib/errors";
 import { log } from "@/lib/log";
@@ -120,84 +118,51 @@ export default async function ConnectionsPage({
   ]);
 
   const notice = readNotice(params);
-  const connectedTypes = new Set(
-    connections.map((connection) => connection.type),
+
+  // `?tab=` is a public URL parameter: resolve it against the registry so an
+  // unknown value renders the default tab instead of an empty page.
+  const category = resolveConnectionCategory(firstValue(params.tab));
+
+  const groups = groupConnectionsByProvider(connections);
+  const visible = groups.filter(
+    (group) => group.provider.category === category.id,
   );
+  const counts = countAccountsByCategory(connections);
 
   return (
     <div className="space-y-8">
       <PageHeader
         eyebrow="Workspace"
         title="Connections"
-        description="Link the services Ryld works with. Each one is authorized on the provider's own site."
+        description="Link the services Ryld works with. Each account is authorized on the provider's own site."
       />
 
       {notice ? <NoticeBanner notice={notice} /> : null}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        {CONNECTION_PROVIDERS.map((provider) => {
-          const Icon = provider.icon;
-          const isConnected = connectedTypes.has(provider.id);
-
-          return (
-            <Card key={provider.id} className="justify-between">
-              <CardHeader>
-                <div className="flex items-start gap-3">
-                  <span className="bg-muted text-foreground grid size-10 shrink-0 place-items-center rounded-lg">
-                    <Icon className="size-5" aria-hidden="true" />
-                  </span>
-                  <div className="space-y-1">
-                    <CardTitle>{provider.label}</CardTitle>
-                    <CardDescription>{provider.description}</CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-
-              <CardFooter className="justify-between gap-3">
-                {isConnected ? (
-                  <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
-                    <span
-                      className="bg-foreground size-1.5 rounded-full"
-                      aria-hidden="true"
-                    />
-                    Connected
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground text-xs">
-                    Opens {provider.consentHost} to authorize
-                  </span>
-                )}
-
-                <Button
-                  asChild
-                  size="sm"
-                  variant={isConnected ? "outline" : "default"}
-                >
-                  {/*
-                   * Plain anchor, not next/link: this is a route handler that
-                   * answers with a 303 to the provider, so the browser must
-                   * perform a real navigation.
-                   */}
-                  <a
-                    href={`/api/backend/connections/${provider.id}/start`}
-                    aria-label={`${isConnected ? "Reconnect" : "Connect"} ${provider.label}`}
-                  >
-                    {isConnected ? "Reconnect" : "Connect"}
-                  </a>
-                </Button>
-              </CardFooter>
-            </Card>
-          );
-        })}
-
-        <div className="border-border/80 flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed px-6 py-10 text-center">
-          <Plus className="text-muted-foreground mb-1 size-4" aria-hidden="true" />
-          <p className="text-sm font-medium">More services soon</p>
-          <p className="text-muted-foreground text-xs">
-            Additional connections will appear here.
-          </p>
+      <section aria-label={`${category.label} connections`} className="space-y-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <ConnectionTabs active={category.id} counts={counts} />
+          <p className="text-muted-foreground text-xs">{category.description}</p>
         </div>
-      </div>
+
+        {visible.length === 0 ? (
+          <EmptyState
+            icon={category.icon}
+            title="Nothing here yet"
+            description={`${category.label} connections aren't available yet. They'll appear here once Ryld supports them.`}
+          />
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {visible.map((group) => (
+              <ConnectionCard
+                key={group.provider.id}
+                provider={group.provider}
+                accounts={group.accounts}
+              />
+            ))}
+          </div>
+        )}
+      </section>
 
       <p className="text-muted-foreground max-w-prose text-xs">
         You can revoke access at any time from the provider&rsquo;s account

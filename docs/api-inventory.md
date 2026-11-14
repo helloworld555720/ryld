@@ -188,8 +188,11 @@ The old `/api/backend/connect/:provider` is gone (`404`). Adding a provider stil
 registry entry plus its OAuth client credentials upstream — the BFF routes are generated.
 
 `/connections` reads the list server-side (`lib/api/connections.ts`, no HTTP hop back through
-the BFF) and renders "Connected" + "Reconnect" when `type` matches a provider. A failing
-list is logged and treated as empty so the page still renders.
+the BFF). A failing list is logged and treated as empty so the page still renders.
+
+Grouping is by `type` only: repeated items with the same `type` are treated as **separate
+accounts of one provider**, never as an upsert. Whether `complete` appends a second account
+or replaces the first is still unverified — the UI renders whatever the list contains.
 
 ## Open questions
 
@@ -202,3 +205,9 @@ list is logged and treated as empty so the page still renders.
 5. Are there other providers besides YouTube? Only `youtube` resolves today; the UI reads
    `lib/connections.ts`, and each provider needs a BFF allowlist entry plus its
    `allowedRedirectHosts`.
+6. Does `complete` add an account or replace the existing one for the same provider? The UI
+   assumes add, since it renders every returned item.
+7. Can an account be identified? Items carry no channel name, avatar, or email, so the UI
+   labels accounts with the first segment of the connection id. Account metadata (and any
+   `prompt=select_account` hint on the consent URL) is needed to let a user pick *which*
+   account to add.
