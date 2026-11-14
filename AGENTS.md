@@ -288,19 +288,18 @@ those files; re-run the CLI instead.
   `redirect_uri` and the API's state format.
 - **2026-11-14** — The API service was refactored: `/connect/:provider` and
   `/oauth/:provider/callback` are gone (`404`). It now exposes
-  `POST /connections/{provider}/start?redirect_uri=…`, `POST /connections/{provider}/complete?…`
-  and `GET /connections/`, all Bearer-protected. `redirect_uri` is validated per request
+  `POST /connections/{provider}/start`, `POST /connections/{provider}/complete` and
+  `GET /connections/`, all Bearer-protected. `redirect_uri` is validated per request
   against an upstream allowlist, and our BFF callback
   (`http://localhost:3000/api/backend/oauth/youtube/callback`) is accepted — the decoupled
-  shape we asked for. Consequences: the current `/api/backend/connect/:provider` route is
-  **broken** (`502`), `state` is still the auth user id, and `complete` answers `500` for
-  every `state` a client can obtain today, so the flow still cannot finish. Recorded in
-  `docs/api-inventory.md`.
+  shape we asked for. The current `/api/backend/connect/:provider` route is therefore
+  **broken** (`502`). Recorded in `docs/api-inventory.md`.
 - **2026-11-14** — `connections/{provider}/*` take their parameters in the **body**:
-  `start` a bare JSON string (the `redirect_uri`), `complete` a JSON object with
-  `code/state/iss/scope/redirect_uri`. The query-string form worked earlier the same day and
-  no longer does, so callers must be re-probed rather than assumed. Recorded in
-  `docs/api-inventory.md`.
+  `start` and `complete` both a JSON object. The shape churned three times in one day
+  (query params → string body → object body, with `state` moving from the user id to a
+  random 128-bit value and `complete` moving from `500` to `200 {"connected":false}` on
+  failure). Treat the API as live and re-probe before wiring a caller;
+  `docs/api-inventory.md` records the current contract with timestamps.
 - **2026-11-14** — `app/(app)/layout.tsx` awaits `connection()` before rendering the shell.
   The shell imports better-auth's client, whose store reads `Date.now()`; under
   cacheComponents that is an unstable value if the subtree is ever prerendered, and dev
