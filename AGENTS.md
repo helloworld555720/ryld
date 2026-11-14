@@ -286,6 +286,16 @@ those files; re-run the CLI instead.
   route the callback through the BFF (preferred, keeps the browser same-origin) or make the
   callback token-free upstream. Not implemented yet — it depends on Google's registered
   `redirect_uri` and the API's state format.
+- **2026-11-14** — The API service was refactored: `/connect/:provider` and
+  `/oauth/:provider/callback` are gone (`404`). It now exposes
+  `POST /connections/{provider}/start?redirect_uri=…`, `POST /connections/{provider}/complete?…`
+  and `GET /connections/`, all Bearer-protected. `redirect_uri` is validated per request
+  against an upstream allowlist, and our BFF callback
+  (`http://localhost:3000/api/backend/oauth/youtube/callback`) is accepted — the decoupled
+  shape we asked for. Consequences: the current `/api/backend/connect/:provider` route is
+  **broken** (`502`), `state` is still the auth user id, and `complete` answers `500` for
+  every `state` a client can obtain today, so the flow still cannot finish. Recorded in
+  `docs/api-inventory.md`.
 - **2026-11-14** — `app/(app)/layout.tsx` awaits `connection()` before rendering the shell.
   The shell imports better-auth's client, whose store reads `Date.now()`; under
   cacheComponents that is an unstable value if the subtree is ever prerendered, and dev

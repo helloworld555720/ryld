@@ -14,19 +14,39 @@ Values here are observations, not assumptions — re-verify before changing the 
 | Schema | `/openapi.json` is **disabled** (404). Endpoints must be learned by probing. |
 | CORS | Enabled, echoes `http://localhost:3000` with `access-control-allow-credentials: true`. Irrelevant: the browser never calls this service directly. |
 | Error envelope | FastAPI default `{"detail": ...}` — a string for 401/404/405, an array for 422 validation |
+| Unhandled errors | `500` + body `Internal Server Error` (plain text) — no traceback leaked |
+
+> **The service was refactored on 2026-11-14.** `/connect/:provider` and
+> `/oauth/:provider/callback` no longer exist (`404`). The flow is now
+> `POST /connections/{provider}/start` → provider consent → `POST /connections/{provider}/complete`,
+> with `redirect_uri` supplied per request. Everything below is the post-refactor contract.
 
 ## Endpoints
 
-### `GET /connect/youtube`
+### `POST /connections/{provider}/start?redirect_uri=<url>`
 
-Starts the YouTube OAuth flow. **GET only** — `POST` returns `405`.
+Starts the OAuth flow. `redirect_uri` is a **required query parameter** — the API no longer
+hardcodes its own callback, which is what we asked for.
 
-With a valid JWT → `307 Temporary Redirect`:
+| Request | Result |
+| --- | --- |
+| Bearer + allowlisted `redirect_uri` | `307` + `location: https://accounts.google.com/...` |
+| Bearer + `https://evil.example.com/cb` | `401` + `{"detail":"invalid redirect uri"}` |
+| Bearer + `http://localhost:8000/oauth/youtube/callback` (the old callback) | `401` + `{"detail":"invalid redirect uri"}` — it is no longer registered |
+| no Bearer | `401` + `{"detail":"Missing bearer token"}` |
+| unknown provider (`/connections/evil/start`) | `404` |
+| `GET` | `405` |
+| missing `redirect_uri` | `422` |
+
+Accepted `redirect_uri`: `http://localhost:3000/api/backend/oauth/youtube/callback` — i.e.
+**our** BFF callback (Option A). Verified 2026-11-14.
+
+The success redirect is:
 
 ```http
 location: https://accounts.google.com/o/oauth2/v2/auth
   ?client_id=8019…apps.googleusercontent.com
-  &redirect_uri=http://localhost:8000/oauth/youtube/callback
+  &redirect_uri=http://localhost:3000/api/backend/oauth/youtube/callback
   &response_type=code
   &scope=https://www.googleapis.com/auth/youtube
   &state=<auth user id>
@@ -34,55 +54,51 @@ location: https://accounts.google.com/o/oauth2/v2/auth
   &prompt=consent
 ```
 
-Without a token → `401` (see above). With an expired/invalid JWT → `401`.
+- `state` is still the **auth service user id**, not a random single-use value. It is not
+  a capability in this design (the Bearer is), but it is guessable and leaks the user id to
+  Google and to every log that records a URL. Recommend `secrets.token_urlsafe(32)` stored
+  server-side with the flow.
+- Status-code nit: an invalid `redirect_uri` is a client error, so it should be `400`, not
+  `401`. `401` implies "authenticate again", which is misleading.
 
-Notes for the frontend:
+### `POST /connections/{provider}/complete?code&state&iss&scope&redirect_uri`
 
-- The `state` is the **auth service user id**, not a random value. That is the API's
-  design; we do not touch it.
-- The browser must follow this redirect itself — the BFF must not fetch the consent page.
-  The BFF therefore forwards the `Location` after validating its host.
-
-## `GET /oauth/youtube/callback`
-
-This is the `redirect_uri` configured on the Google client — an **API route**, not ours.
-Probed 2026-11-14:
+The code exchange. All five query parameters are required.
 
 | Request | Result |
 | --- | --- |
-| no `Authorization` | `401` + `www-authenticate: Bearer` + `{"detail":"Missing bearer token"}` |
-| invalid bearer | `401` + `{"detail":"Invalid or expired token"}` |
-| valid bearer, no query | `422` — requires `code`, `state`, `iss`, `scope` |
-| valid bearer, non-UUID `state` | `422` — `state` must be a UUID |
-| valid bearer, UUID `state`, fake `code` | `404` + `{"detail":"User not found"}` — the user is looked up by `state`, not by the token subject |
-| `POST` | `405` |
+| any missing query parameter | `422` listing each missing field |
+| `state` = the user id emitted by `start` + fake `code` | **`500` Internal Server Error** |
+| `state` = UUID + fake `code` | **`500` Internal Server Error** |
+| `error=access_denied` and no `code` (user cancelled consent) | `422` — `code` is required |
 
-### Why the flow cannot complete today
+Two open upstream defects:
 
-1. **The browser cannot send a Bearer token.** Google redirects the browser to the
-   `redirect_uri`; the JWT never leaves our server (invariant §5.2) and a top-level
-   navigation cannot carry an `Authorization` header. The callback therefore `401`s before
-   any code exchange.
-2. **The state type does not match.** `GET /connect/youtube` emits
-   `state=<auth user id>` (e.g. `UrJz…`, 32 chars, **not** a UUID), while the callback
-   validates `state` as a UUID and looks the user up by it. The API rejects the state its
-   own connect endpoint produced, so even a hand-supplied token gets `422`.
+1. **`500` on an unknown/unusable `state`.** No `state` the client can obtain today yields
+   anything but a 500, so the flow still cannot complete. A rejected `state` should be
+   `400`, and a cancelled consent should be accepted and reported, not `422`'d.
+2. **The `state` mismatch persists.** `start` emits the auth user id; `complete` cannot use
+   it. Same defect as before the refactor, now surfacing as a 500 instead of a 422.
 
-### Options
+### `GET /connections/`
 
-- **A — callback through the BFF (fits this repo).** Register
-  `http://localhost:3000/api/backend/oauth/youtube/callback` as Google's `redirect_uri` and
-  add a BFF callback route that requires the session, mints the JWT, forwards
-  `code/state/iss/scope` to the API callback, then `303`s to `/connections`. The browser
-  stays same-origin and the token stays server-side. Requires the API to emit (and accept)
-  a UUID state — and preferably a random single-use value instead of the user id.
-- **B — token-free callback (upstream fix).** Identify the user from a signed, single-use
-  `state` and redirect back to the frontend. Simpler for the API, but the browser then
-  touches the API origin directly, which this repo avoids everywhere else.
+Lists the caller's connections. **Trailing slash matters**: `/connections` answers
+`307` → `/connections/`.
+
+| Request | Result |
+| --- | --- |
+| no Bearer | `401` + `{"detail":"Missing bearer token"}` |
+| Bearer | `200` + `[]` for a fresh account |
+
+The item schema is unknown until a connection actually exists. This is the endpoint that
+lets `/connections` render "Connected" instead of "Connect".
+
+`DELETE /connections/{provider}` → `404`, so there is no disconnect endpoint yet.
 
 ## Probed and absent
 
-`404` for `/`, `/health`, `/connections`, `/me`, `/connect`, `/auth/me`.
+`404` for `/`, `/health`, `/me`, `/connect/youtube`, `/oauth/youtube/callback`,
+`/connections/youtube`, `/connect`, `/auth/me`. `PATCH /connections/` → `405`.
 
 `/users/{id}` exists (`422` when `{id}` is not a UUID), so the upstream user resource is
 keyed by UUID — the auth service's user ids are not UUIDs. Not used by this repo yet.
@@ -101,15 +117,29 @@ to the API owner.
 
 ## Frontend contract
 
+**Current state: broken by the refactor.** `/api/backend/connect/:provider` still forwards
+to `GET {API_URL}/connect/:provider`, which now returns `404`; the BFF maps that to
+`502 UPSTREAM` and the Connect card dead-ends. Verified 2026-11-14.
+
+Target contract, now that the upstream takes a per-request `redirect_uri`:
+
 | Browser URL | Upstream | Behaviour |
 | --- | --- | --- |
-| `GET /api/backend/connect/youtube` | `GET {API_URL}/connect/youtube` | BFF mints the JWT, requests with `redirect: "manual"`, validates the `Location` host against `lib/connections.ts`, then returns `303` + `cache-control: no-store`. Unknown provider → `404` JSON; anonymous → `307` to sign-in. |
+| `POST /api/backend/connections/youtube/start` | `POST {API_URL}/connections/youtube/start?redirect_uri=<our callback>` | Mints the JWT, `redirect: "manual"`, validates `Location` host, `303`s the browser to Google. |
+| `GET /api/backend/oauth/youtube/callback` | `POST {API_URL}/connections/youtube/complete?…` | Google's `redirect_uri`. Requires the session cookie (survives a cross-site top-level GET under `SameSite=Lax`), mints the JWT, forwards `code/state/iss/scope/redirect_uri`, then `303`s to `/connections?connected=youtube` or `?error=…`. |
+| `GET /api/backend/connections` | `GET {API_URL}/connections/` | Lists connections so the cards can show "Connected". |
+
+Notes: the browser never reaches the API origin; the JWT stays server-side in both
+directions. Because the callback is a top-level navigation it must never return JSON — the
+BFF owns the user-facing redirect.
 
 ## Open questions
 
-1. What does a successful OAuth callback return? Today it is an API route that requires a
-   bearer token and a UUID `state`, so the browser cannot reach it at all (see the callback
-   section above). Until that changes, `/connections` has no success/error state to show.
-2. Is there a connections-list endpoint (to show "Connected" and offer Disconnect)?
-3. Are there other providers besides YouTube? The UI reads `lib/connections.ts`; each new
+1. What does `POST /connections/{provider}/complete` return on success, and why does it
+   `500` instead of `400` on a `state` it cannot use? Until that is fixed the flow cannot
+   complete end to end.
+2. What is the shape of an item in `GET /connections/`? Needed to render "Connected" and
+   the connected account's label.
+3. Is a disconnect endpoint planned? `DELETE /connections/{provider}` is `404` today.
+4. Are there other providers besides YouTube? The UI reads `lib/connections.ts`; each new
    provider needs a BFF allowlist entry and its `allowedRedirectHosts`.
