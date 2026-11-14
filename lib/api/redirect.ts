@@ -1,9 +1,9 @@
 /**
  * Validates an upstream `Location` before the BFF hands it to the browser.
  *
- * Without this, a compromised or misconfigured API could turn
- * `/api/backend/connect/*` into an open redirect on our own origin — the kind
- * of bug that makes phishing links look trustworthy.
+ * Without this, a compromised or misconfigured API could turn the Connect
+ * endpoint into an open redirect on our own origin — the kind of bug that makes
+ * phishing links look trustworthy.
  */
 const MAX_LENGTH = 8_192;
 

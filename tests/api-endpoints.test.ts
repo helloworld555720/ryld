@@ -5,66 +5,108 @@ import {
   buildUpstreamPath,
   matchEndpoint,
 } from "@/lib/api/endpoints";
+import { CONNECTION_PROVIDERS } from "@/lib/connections";
 
 describe("matchEndpoint", () => {
-  it("matches a registered connect path and exposes its provider", () => {
-    const match = matchEndpoint("GET", "/connect/youtube");
+  it("matches the Connect anchor and records that upstream takes a POST", () => {
+    const match = matchEndpoint("GET", "/connections/youtube/start");
 
     expect(match?.params).toEqual({ provider: "youtube" });
+    expect(match?.endpoint.kind).toBe("oauth-start");
+    expect(match?.endpoint.upstreamMethod).toBe("POST");
     expect(match?.endpoint.redirectHosts).toEqual(["accounts.google.com"]);
   });
 
+  it("matches the provider callback that Google is registered to call", () => {
+    const match = matchEndpoint("GET", "/oauth/youtube/callback");
+
+    expect(match?.params).toEqual({ provider: "youtube" });
+    expect(match?.endpoint.kind).toBe("oauth-complete");
+    expect(buildUpstreamPath(match!)).toBe("/connections/youtube/complete");
+  });
+
+  it("matches the connections list and rewrites the trailing slash", () => {
+    const match = matchEndpoint("GET", "/connections");
+
+    expect(match?.endpoint.kind).toBe("json");
+    expect(match?.endpoint.response).toBeDefined();
+    expect(buildUpstreamPath(match!)).toBe("/connections/");
+  });
+
   it("rejects a method the endpoint did not register", () => {
-    expect(matchEndpoint("POST", "/connect/youtube")).toBeNull();
-    expect(matchEndpoint("TRACE", "/connect/youtube")).toBeNull();
+    expect(matchEndpoint("POST", "/connections/youtube/start")).toBeNull();
+    expect(matchEndpoint("POST", "/oauth/youtube/callback")).toBeNull();
+    expect(matchEndpoint("TRACE", "/connections")).toBeNull();
   });
 
   it("rejects providers that are not in the registry", () => {
-    expect(matchEndpoint("GET", "/connect/vimeo")).toBeNull();
+    expect(matchEndpoint("GET", "/connections/vimeo/start")).toBeNull();
+    expect(matchEndpoint("GET", "/oauth/vimeo/callback")).toBeNull();
   });
 
   it("rejects unknown paths", () => {
     expect(matchEndpoint("GET", "/admin")).toBeNull();
-    expect(matchEndpoint("GET", "/connect")).toBeNull();
+    expect(matchEndpoint("GET", "/connect/youtube")).toBeNull();
+    expect(matchEndpoint("GET", "/connections/youtube")).toBeNull();
+    expect(matchEndpoint("GET", "/connections/youtube/complete")).toBeNull();
   });
 
   it("rejects traversal, encoding, and absolute URLs", () => {
     for (const path of [
-      "/connect/../admin",
-      "/connect/%2e%2e/youtube",
-      "/connect/youtube/",
-      "/connect//youtube",
-      "//connect/youtube",
-      "http://localhost:8000/connect/youtube",
-      "/connect/youtube?x=1",
+      "/connections/../admin/start",
+      "/connections/%2e%2e/start",
+      "/connections/youtube/start/",
+      "/connections//start",
+      "//connections/youtube/start",
+      "http://localhost:8000/connections/youtube/start",
+      "/connections/youtube/start?x=1",
+      "/oauth/../callback",
     ]) {
       expect(matchEndpoint("GET", path)).toBeNull();
     }
   });
 
   it("is case-sensitive", () => {
-    expect(matchEndpoint("GET", "/CONNECT/youtube")).toBeNull();
-    expect(matchEndpoint("GET", "/connect/YouTube")).toBeNull();
-  });
-
-  it("builds the upstream path from the registry, not raw input", () => {
-    const match = matchEndpoint("GET", "/connect/youtube");
-    expect(match).not.toBeNull();
-    expect(buildUpstreamPath(match!)).toBe("/connect/youtube");
+    expect(matchEndpoint("GET", "/Connections/youtube/start")).toBeNull();
+    expect(matchEndpoint("GET", "/connections/YouTube/start")).toBeNull();
   });
 });
 
 describe("BFF_ENDPOINTS", () => {
-  it("scopes every endpoint to explicit params and redirect hosts", () => {
-    expect(BFF_ENDPOINTS.length).toBeGreaterThan(0);
+  it("derives every provider param from the provider registry", () => {
+    const ids = CONNECTION_PROVIDERS.map((provider) => provider.id);
 
     for (const endpoint of BFF_ENDPOINTS) {
-      expect(endpoint.redirectHosts?.length ?? 0).toBeGreaterThan(0);
-      expect(Object.keys(endpoint.params ?? {}).length).toBeGreaterThan(0);
-
-      for (const values of Object.values(endpoint.params ?? {})) {
-        expect(values.length).toBeGreaterThan(0);
+      for (const value of endpoint.params?.provider ?? []) {
+        expect(ids).toContain(value);
       }
     }
+  });
+
+  it("gives every redirect endpoint an explicit host allowlist", () => {
+    const redirecting = BFF_ENDPOINTS.filter(
+      (endpoint) => endpoint.kind === "oauth-start",
+    );
+
+    expect(redirecting.length).toBe(CONNECTION_PROVIDERS.length);
+    for (const endpoint of redirecting) {
+      expect(endpoint.redirectHosts?.length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  it("gives every json endpoint a response schema", () => {
+    for (const endpoint of BFF_ENDPOINTS) {
+      if (endpoint.kind === "json") expect(endpoint.response).toBeDefined();
+    }
+  });
+
+  it("exposes exactly two browser paths per provider", () => {
+    const patterns = BFF_ENDPOINTS.filter(
+      (endpoint) => endpoint.params?.provider,
+    ).map((endpoint) => endpoint.pattern);
+
+    expect(patterns).toContain("/connections/:provider/start");
+    expect(patterns).toContain("/oauth/:provider/callback");
+    expect(patterns).toHaveLength(CONNECTION_PROVIDERS.length * 2);
   });
 });

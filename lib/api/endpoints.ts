@@ -1,5 +1,8 @@
 import "server-only";
 
+import type { ZodType } from "zod";
+
+import { connectionsListSchema } from "@/lib/api/schemas/connections";
 import { CONNECTION_PROVIDERS } from "@/lib/connections";
 
 /**
@@ -8,7 +11,11 @@ import { CONNECTION_PROVIDERS } from "@/lib/connections";
  * the URL, and `:params` are validated against literal values — never passed
  * through as free-form input.
  *
- * See AGENTS.md §5.4 (open proxy / SSRF) and T2.2.
+ * Every entry names the browser-facing call *and* the upstream call. They are
+ * not always the same verb: the cards are plain anchors (a GET navigation), so
+ * `oauth-start` receives a GET and issues a POST upstream.
+ *
+ * See AGENTS.md §5.4 (open proxy / SSRF).
  */
 export const HTTP_METHODS = [
   "GET",
@@ -20,11 +27,27 @@ export const HTTP_METHODS = [
 
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
+/**
+ * How the handler treats the upstream answer:
+ * - `json` — upstream returns JSON, validated against `response` and relayed.
+ * - `oauth-start` — upstream returns a 3xx to the consent screen; host-checked,
+ *   relayed to the browser as a 303.
+ * - `oauth-complete` — upstream returns `{ connected }`; the handler turns it
+ *   into a 303 back to `/connections` (a top-level navigation must never end
+ *   on a JSON body).
+ */
+export type EndpointKind = "json" | "oauth-start" | "oauth-complete";
+
 export interface EndpointEntry {
   id: string;
+  kind: EndpointKind;
+  /** Browser-facing method and path under `/api/backend`. */
   method: HttpMethod;
-  /** `/connect/:provider` — literal segments plus named params. */
   pattern: string;
+  /** Upstream verb, when it differs from the browser-facing one. */
+  upstreamMethod?: HttpMethod;
+  /** Upstream path, when it differs from `pattern`. Supports `:params`. */
+  upstreamPath?: string;
   /** Allowed values for each `:param`. A param not listed here never matches. */
   params?: Record<string, readonly string[]>;
   /**
@@ -33,6 +56,8 @@ export interface EndpointEntry {
    * all providers, so one provider cannot redirect through another's host.
    */
   redirectHosts?: readonly string[];
+  /** Required for `json`: the upstream payload must parse against this. */
+  response?: ZodType;
 }
 
 /** Bootstrap segments only: no percent-encoding, no dots, no slashes. */
@@ -50,15 +75,42 @@ function splitPath(path: string): string[] | null {
   return segments;
 }
 
-export const BFF_ENDPOINTS: readonly EndpointEntry[] = CONNECTION_PROVIDERS.map(
-  (provider) => ({
-    id: `connections:connect:${provider.id}`,
-    method: "GET",
-    pattern: "/connect/:provider",
-    params: { provider: [provider.id] },
-    redirectHosts: provider.allowedRedirectHosts,
-  }),
+/** Both OAuth hops exist per provider, generated from the registry. */
+const connectionEntries = CONNECTION_PROVIDERS.flatMap(
+  (provider): EndpointEntry[] => [
+    {
+      id: `connections.start:${provider.id}`,
+      kind: "oauth-start",
+      method: "GET",
+      pattern: "/connections/:provider/start",
+      params: { provider: [provider.id] },
+      upstreamMethod: "POST",
+      redirectHosts: provider.allowedRedirectHosts,
+    },
+    {
+      id: `connections.callback:${provider.id}`,
+      kind: "oauth-complete",
+      method: "GET",
+      pattern: "/oauth/:provider/callback",
+      params: { provider: [provider.id] },
+      upstreamMethod: "POST",
+      upstreamPath: "/connections/:provider/complete",
+    },
+  ],
 );
+
+export const BFF_ENDPOINTS: readonly EndpointEntry[] = [
+  {
+    id: "connections.list",
+    kind: "json",
+    method: "GET",
+    pattern: "/connections",
+    // The upstream route only resolves with the trailing slash.
+    upstreamPath: "/connections/",
+    response: connectionsListSchema,
+  },
+  ...connectionEntries,
+];
 
 export interface EndpointMatch {
   endpoint: EndpointEntry;
@@ -112,11 +164,13 @@ export function matchEndpoint(
 }
 
 /**
- * Rebuilds the upstream path from the registry pattern, not from the incoming
- * request. The values are already allowlisted; encoding is belt and braces.
+ * Rebuilds the upstream path from the registry, not from the incoming request.
+ * The values are already allowlisted; encoding is belt and braces.
  */
 export function buildUpstreamPath(match: EndpointMatch): string {
-  return match.endpoint.pattern.replace(/:([a-zA-Z]+)/g, (_match, name: string) =>
+  const template = match.endpoint.upstreamPath ?? match.endpoint.pattern;
+
+  return template.replace(/:([a-zA-Z]+)/g, (_match, name: string) =>
     encodeURIComponent(match.params[name] ?? ""),
   );
 }

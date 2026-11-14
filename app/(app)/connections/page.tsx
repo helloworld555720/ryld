@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { CircleCheck, Plus, TriangleAlert } from "lucide-react";
 
 import { PageHeader } from "@/components/app/page-header";
 import { Button } from "@/components/ui/button";
@@ -9,11 +9,95 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { CONNECTION_PROVIDERS } from "@/lib/connections";
+import {
+  CONNECTION_PROVIDERS,
+  getConnectionProvider,
+} from "@/lib/connections";
 
 export const instant = false;
 
-export default function ConnectionsPage() {
+type ConnectionsSearchParams = Record<
+  string,
+  string | string[] | undefined
+>;
+
+interface Notice {
+  tone: "success" | "error";
+  message: string;
+}
+
+function firstValue(value: string | string[] | undefined): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * The callback lands here with `?connected=<id>` or `?error=<code>`. Both are
+ * attacker-controllable query values, so nothing is ever echoed: every message
+ * is derived from the provider registry or a fixed string.
+ */
+function readNotice(params: ConnectionsSearchParams): Notice | null {
+  const connected = getConnectionProvider(firstValue(params.connected) ?? "");
+  if (connected) {
+    return { tone: "success", message: `${connected.label} is connected.` };
+  }
+
+  const error = firstValue(params.error);
+  if (!error) return null;
+
+  if (error === "access_denied") {
+    return {
+      tone: "error",
+      message: "Authorization was cancelled. Nothing was changed.",
+    };
+  }
+
+  if (error === "session_expired") {
+    return {
+      tone: "error",
+      message: "Your session expired before authorization finished. Please try again.",
+    };
+  }
+
+  for (const provider of CONNECTION_PROVIDERS) {
+    if (error === `${provider.id}_failed` || error === `${provider.id}_start_failed`) {
+      return {
+        tone: "error",
+        message: `We couldn't finish connecting ${provider.label}. Please try again.`,
+      };
+    }
+  }
+
+  return {
+    tone: "error",
+    message: "We couldn't finish that connection. Please try again.",
+  };
+}
+
+function NoticeBanner({ notice }: { notice: Notice }) {
+  const isSuccess = notice.tone === "success";
+  const Icon = isSuccess ? CircleCheck : TriangleAlert;
+
+  return (
+    <div
+      role={isSuccess ? "status" : "alert"}
+      className="border-border bg-card text-foreground flex items-start gap-3 rounded-xl border px-4 py-3 text-sm"
+    >
+      <Icon
+        className="text-muted-foreground mt-0.5 size-4 shrink-0"
+        aria-hidden="true"
+      />
+      <p>{notice.message}</p>
+    </div>
+  );
+}
+
+export default async function ConnectionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<ConnectionsSearchParams>;
+}) {
+  const notice = readNotice(await searchParams);
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -21,6 +105,8 @@ export default function ConnectionsPage() {
         title="Connections"
         description="Link the services Ryld works with. Each one is authorized on the provider's own site."
       />
+
+      {notice ? <NoticeBanner notice={notice} /> : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
         {CONNECTION_PROVIDERS.map((provider) => {
@@ -51,7 +137,7 @@ export default function ConnectionsPage() {
                    * perform a real navigation.
                    */}
                   <a
-                    href={`/api/backend/connect/${provider.id}`}
+                    href={`/api/backend/connections/${provider.id}/start`}
                     aria-label={`Connect ${provider.label}`}
                   >
                     Connect

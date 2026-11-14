@@ -143,30 +143,39 @@ instead of "Connect".
 `/users/{id}` exists (`422` when `{id}` is not a UUID), so the upstream user resource is
 keyed by UUID — the auth service's user ids are not UUIDs. Not used by this repo yet.
 
-## Upstream OAuth client (resolved 2026-11-14)
+## Upstream OAuth client
 
-Google accepts the consent URL: immediately after the redirect, the browser lands on
-Google's sign-in screen ("to continue to rayload"), so `redirect_uri_mismatch` is gone. The
-app display name configured on the OAuth client is **rayload**, not Ryld — worth aligning
-for user-facing consent.
+Google accepted the **old** API callback (`http://localhost:8000/oauth/youtube/callback`)
+through 2026-11-14, and the app display name on the client is **rayload**, not Ryld — worth
+aligning for consent copy.
 
-## Frontend contract
+That client does **not** list our BFF callback. Asking it to authorize
+`http://localhost:3000/api/backend/oauth/youtube/callback` now returns Google's
+`Access blocked … Error 400: redirect_uri_mismatch` page (verified in the browser
+2026-11-14 14:05 UTC). Add that URI to the client's authorized redirect URIs; it is the
+only outstanding change for the flow to reach the consent screen.
 
-**Current state: broken by the refactor.** `/api/backend/connect/:provider` still forwards
-to `GET {API_URL}/connect/:provider`, which now returns `404`; the BFF maps that to
-`502 UPSTREAM` and the Connect card dead-ends. Verified 2026-11-14.
+## Frontend contract (implemented 2026-11-14)
 
-Target contract:
+Registry: `lib/api/endpoints.ts`. Handler: `app/api/backend/[...path]/route.ts`.
+Verified against the dev server at 14:04 UTC:
 
-| Browser URL | Upstream | Behaviour |
+| Browser call | Upstream | Behaviour |
 | --- | --- | --- |
-| `POST /api/backend/connections/youtube/start` | `POST {API_URL}/connections/youtube/start` with body `{"redirect_uri":"<our callback>"}` | Mints the JWT, `redirect: "manual"`, validates `Location` host, `303`s the browser to Google. |
-| `GET /api/backend/oauth/youtube/callback` | `POST {API_URL}/connections/youtube/complete` with the five-field object | Google's `redirect_uri`. Requires the session cookie (survives a cross-site top-level GET under `SameSite=Lax`), mints the JWT, forwards `code/state/iss/scope/redirect_uri`, then `303`s to `/connections?connected=youtube` (on `connected:true`) or `?error=…`. |
-| `GET /api/backend/connections` | `GET {API_URL}/connections/` | Lists connections so the cards can show "Connected". |
+| `GET /api/backend/connections/youtube/start` | `POST /connections/youtube/start` with `{"redirect_uri": "<origin>/api/backend/oauth/youtube/callback"}` | `303` to the consent screen after the `Location` host check; anonymous → `307` to sign-in; unknown provider or traversal → `404` |
+| `GET /api/backend/oauth/youtube/callback` | `POST /connections/youtube/complete` with `code/state/iss/scope/redirect_uri` | `303` to `/connections?connected=youtube` or `?error=…`; never JSON |
+| `GET /api/backend/connections` | `GET /connections/` | validated JSON, `cache-control: no-store` |
 
-Notes: the browser never reaches the API origin; the JWT stays server-side in both
-directions. Because the callback is a top-level navigation it must never return JSON — the
-BFF owns the user-facing redirect.
+Callback outcomes verified: fake code → `?error=youtube_failed`; `error=access_denied` →
+`?error=access_denied`; no session → `?error=session_expired`; missing params →
+`?error=youtube_failed`.
+
+`iss` is taken from the callback when present (OpenID Connect) and falls back to the
+provider's `issuer` otherwise, because the API requires it but a plain OAuth callback does
+not carry it.
+
+The old `/api/backend/connect/:provider` is gone (`404`). Adding a provider still means one
+registry entry plus its OAuth client credentials upstream — the BFF routes are generated.
 
 ## Open questions
 

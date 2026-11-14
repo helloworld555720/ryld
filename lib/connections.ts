@@ -5,16 +5,22 @@ import { SquarePlay, type LucideIcon } from "lucide-react";
  *
  * Adding a provider is three steps: an entry here, a matching BFF entry in
  * `lib/api/endpoints.ts`, and the provider's OAuth credentials on the API
- * service. The `/connect/:provider` route rejects anything not listed here.
+ * service. The BFF rejects any provider not listed here.
  */
 export interface ConnectionProvider {
-  /** Also the upstream path segment: `/connect/<id>`. */
+  /** Also the upstream path segment: `/connections/<id>/*`. */
   id: string;
   label: string;
   description: string;
   icon: LucideIcon;
   /** Which site the user is sent to for consent, for the card copy. */
   consentHost: string;
+  /**
+   * OIDC issuer for this provider. The API requires an `iss` on completion but
+   * the provider only sends one on OpenID Connect callbacks, so the BFF
+   * supplies this value when the callback omits it.
+   */
+  issuer: string;
   /**
    * Hosts the API is allowed to redirect to for this provider. The BFF refuses
    * any `Location` outside this list, so a compromised upstream cannot bounce
@@ -31,6 +37,7 @@ export const CONNECTION_PROVIDERS: readonly ConnectionProvider[] = [
       "Authorize Ryld to access your YouTube account and channel data.",
     icon: SquarePlay,
     consentHost: "Google",
+    issuer: "https://accounts.google.com",
     allowedRedirectHosts: ["accounts.google.com"],
   },
 ];

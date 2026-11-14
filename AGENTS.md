@@ -58,10 +58,13 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
 
 - The browser only ever talks to this app's origin. Cookies are first-party, so no
   `SameSite=None`, no CORS, no cross-site cookie partitioning problems.
-- OAuth start (`/api/backend/connect/:provider`) is a BFF **redirect**, not a JSON call:
-  the API's 3xx is fetched with `redirect: "manual"`, the `Location` host is checked against
-  `lib/connections.ts`, and only then handed to the browser as a `303`. Never let the
-  browser call the API service directly, and never follow the consent URL server-side.
+- OAuth is two BFF hops, both same-origin: the Connect anchor hits
+  `GET /api/backend/connections/:provider/start`, which issues the upstream `POST`
+  with our callback URL and hands the browser the consent `303` after checking the
+  `Location` host against `lib/connections.ts`; the provider later redirects to
+  `GET /api/backend/oauth/:provider/callback`, which mints the JWT again, exchanges the
+  code upstream, and `303`s back to `/connections`. Never let the browser call the API
+  service directly, and never follow the consent URL server-side.
 - The JWT is minted **per request, server-side**: read the session cookie →
   `GET {AUTH_SERVICE_URL}/api/auth/token` → `{ token }` → attach as Bearer.
   (Verified: the endpoint is GET-only; a POST returns a bare 404.)
@@ -87,8 +90,9 @@ lib/
   api/server.ts            apiFetch(), parse with zod, error normalisation
   api/endpoints.ts         typed endpoint registry (the BFF allowlist)
   api/redirect.ts          host allowlist for upstream 3xx (OAuth start)
-  connections.ts           connection providers + consent hosts
+  api/callback-url.ts      the redirect_uri both hops must agree on
   api/schemas/             zod schemas for upstream payloads
+  connections.ts           connection providers + consent hosts
   env.ts                   zod-validated env, server/public split
   errors.ts                ApiError, error mapping, safe messages
   redirect.ts              safeRedirect() — same-origin relative paths only
@@ -300,6 +304,16 @@ those files; re-run the CLI instead.
   random 128-bit value and `complete` moving from `500` to `200 {"connected":false}` on
   failure). Treat the API as live and re-probe before wiring a caller;
   `docs/api-inventory.md` records the current contract with timestamps.
+- **2026-11-14** — BFF rewritten for the refactored API. One registry
+  (`lib/api/endpoints.ts`) drives three kinds: `json`, `oauth-start`, `oauth-complete`.
+  The Connect anchor stays a GET (plain anchor, real navigation) and the BFF issues the
+  upstream POST; the provider callback mints the JWT server-side and always answers with a
+  `303` into `/connections`, never JSON. `iss` falls back to the provider's configured
+  issuer because the API requires it and plain OAuth callbacks omit it. The connections
+  list is proxied and validated but not yet rendered — the item shape is unknown. Remaining
+  blocker: Google's client still authorizes only
+  `http://localhost:8000/oauth/youtube/callback`, so consent answers
+  `redirect_uri_mismatch` for our URI.
 - **2026-11-14** — `app/(app)/layout.tsx` awaits `connection()` before rendering the shell.
   The shell imports better-auth's client, whose store reads `Date.now()`; under
   cacheComponents that is an unstable value if the subtree is ever prerendered, and dev
