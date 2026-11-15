@@ -13,18 +13,23 @@ const TIMEOUT_MS = 10_000;
 /**
  * Loose on purpose: better-auth may add fields. We only require what the UI
  * actually reads, and pass the rest through so nothing breaks on upgrade.
+ *
+ * Ids are UUIDv4 since the auth service switched generator on 2026-11-15
+ * (verified through this app's proxy: `user.id` and `session.id` both parse as
+ * `z.uuid()`). Validating them means a future format change fails closed with
+ * a 502 rather than silently mis-keying identity.
  */
 const sessionSchema = z.object({
   session: z
     .object({
-      id: z.string(),
-      userId: z.string(),
+      id: z.uuid(),
+      userId: z.uuid(),
       expiresAt: z.string(),
     })
     .catchall(z.unknown()),
   user: z
     .object({
-      id: z.string(),
+      id: z.uuid(),
       email: z.string(),
       name: z.string().optional(),
       image: z.string().nullish(),

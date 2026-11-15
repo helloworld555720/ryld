@@ -87,6 +87,12 @@ const res = await fetch(`${AUTH_SERVICE_URL}/api/auth/token`, {
 | Rate limiting | present: repeated `sign-in/email` attempts return `429` (no `RateLimit-*` headers observed) |
 | `POST /delete-user` | `404` even with a valid session — endpoint is disabled (`user.deleteUser.enabled: false`) |
 
+> **Update 2026-11-15:** the auth service now issues **UUIDv4** ids for both `user.id` and
+> `session.id` (previously better-auth's short alphanumeric ids). The database was cleared at
+> the same time, so every id recorded below is historical. Re-verified through this app's
+> proxy on a fresh sign-up/sign-in: `ec33cdc2-44bf-4310-a85c-5e362510657c`. `lib/auth/server.ts`
+> validates both ids as `z.uuid()` so a future change fails closed.
+
 ## Duplicate accounts: **rejected, but disguised as success** (verified 2026-11-13)
 
 > Correction to an earlier reading: three sign-ups for the same email returned `200` with three

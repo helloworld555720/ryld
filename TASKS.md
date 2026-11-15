@@ -29,6 +29,9 @@ open. `API_URL` is `http://localhost:8000` (verified 2026-11-14); the connect fl
 > `probe-dup-20261113220820@example.com`, id `FK2lcG4YVOqtxcxE4X75sjBZP71CyEEm`. Self-service
 > delete is disabled (`/delete-user` → `404`), so it needs SQL. The other two ids returned by
 > sign-up were synthetic and were never persisted.
+>
+> **Resolved 2026-11-15:** the owner cleared the database, so that probe row is gone. Ids are
+> now UUIDv4; the short alphanumeric ids above are historical. See `docs/auth-contract.md`.
 
 ---
 

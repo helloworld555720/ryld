@@ -150,8 +150,10 @@ This is the endpoint that drives the "Connected" state on `/connections`.
 `404` for `/`, `/health`, `/me`, `/connect/youtube`, `/oauth/youtube/callback`,
 `/connections/youtube` (every method), `/connect`, `/auth/me`.
 
-`/users/{id}` exists (`422` when `{id}` is not a UUID), so the upstream user resource is
-keyed by UUID — the auth service's user ids are not UUIDs. Not used by this repo yet.
+`/users/{id}` exists and returns `422` when `{id}` is not a UUID. As of 2026-11-15 the auth
+service issues **UUIDv4 user ids** (verified via `GET /api/auth/get-session` through our proxy:
+`user.id` = `session.userId` = `ec33cdc2-44bf-4310-a85c-5e362510657c`), so both services now key
+users on the same shape. Not used by this repo yet.
 
 ## Upstream OAuth client
 

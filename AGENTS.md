@@ -345,6 +345,12 @@ those files; re-run the CLI instead.
   cacheComponents that is an unstable value if the subtree is ever prerendered, and dev
   reports it as a blocking-prerender error. The area is session-gated, so request-time
   rendering is correct rather than a workaround.
+- **2026-11-15** — The auth service now issues **UUIDv4** ids (`user.id`, `session.id`,
+  `session.userId`); the owner also cleared its database, so every id recorded in earlier
+  entries and probe logs is historical. Verified on a fresh account through this app's
+  proxy (`ec33cdc2-44bf-4310-a85c-5e362510657c`). `lib/auth/server.ts` validates both ids as
+  `z.uuid()`, so a future generator change fails closed with a 502 instead of silently
+  mis-keying identity. The API's connection ids were already UUIDs and are unchanged.
 
 ## 11. Deferred / follow-ups
 
