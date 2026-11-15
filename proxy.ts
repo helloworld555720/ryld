@@ -11,7 +11,12 @@ import { buildCsp, newNonce } from "@/lib/csp";
  * It also issues the per-request CSP nonce (Next 16 renamed middleware to
  * proxy; nonces must be generated per request, before rendering).
  */
-const PROTECTED_PREFIXES = ["/home", "/connections", "/dashboard"];
+const PROTECTED_PREFIXES = [
+  "/home",
+  "/connections",
+  "/api-token",
+  "/dashboard",
+];
 
 function isProtected(pathname: string): boolean {
   return PROTECTED_PREFIXES.some(

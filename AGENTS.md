@@ -48,16 +48,19 @@ talks to a database, and never runs better-auth's server.
 
 ```
 Browser
-  │  same-origin only, no CORS, no tokens in JS
+  │  same-origin only, no CORS
   ├── /api/auth/*      ──proxy──▶  Auth service  /api/auth/*
   │                                  (Set-Cookie passed through, first-party)
-  └── /api/backend/*   ──BFF───▶  API service   (Bearer JWT minted server-side)
+  ├── /api/backend/*   ──BFF───▶  API service   (Bearer JWT minted server-side)
+  └── /api/token       ──mint──▶  Auth service  (POST-only; explicit user request)
 
 Server Components ──▶ lib/api/server.ts ──▶ API service (same token path, no HTTP hop through Next)
 ```
 
 - The browser only ever talks to this app's origin. Cookies are first-party, so no
   `SameSite=None`, no CORS, no cross-site cookie partitioning problems.
+- The browser holds no token except in the memory of the `/api-token` page, and only
+  after the signed-in user clicks Generate. Everything else goes through the BFF.
 - OAuth is two BFF hops, both same-origin: the Connect anchor hits
   `GET /api/backend/connections/:provider/start`, which issues the upstream `POST`
   with our callback URL and hands the browser the consent `303` after checking the
@@ -76,8 +79,10 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
 app/
   auth/[path]/             better-auth-ui screens (sign-in, sign-up, forgot/reset, verify)
   (app)/                   authenticated area: layout guard + shell
+    api-token/             developer token page (explicit JWT exception, see §5.2)
   api/auth/[...all]/       auth proxy route handler
   api/backend/[...path]/   BFF proxy, allowlist-only
+  api/token/               POST-only JWT mint for the token page
 proxy.ts                   Next 16's renamed middleware: optimistic cookie check only
 components/
   ui/                      shadcn primitives (generated, don't hand-edit upstream files)
@@ -98,7 +103,8 @@ lib/
   errors.ts                ApiError, error mapping, safe messages
   redirect.ts              safeRedirect() — same-origin relative paths only
   csp.ts                   nonce-based Content-Security-Policy (pure, unit-tested)
-  nav.ts                   nav registry (Home, Connections)
+  jwt.ts                   unverified `exp` read for the token page (never logs)
+  nav.ts                   nav registry (Home, Connections, API token)
   ui-prefs.ts              cookie-backed UI preferences (sidebar rail)
   query-client.ts          one QueryClient per request / browser singleton
 docs/
@@ -111,8 +117,12 @@ docs/
 1. **One credential in the browser:** the session cookie. `HttpOnly`, `Secure` in prod,
    `SameSite=Lax`, host-only. Never store tokens in `localStorage`/`sessionStorage` or
    readable cookies. Never ship a refresh token.
-2. **The JWT never leaves the server.** Not in props, RSC payloads, JSON responses,
-   logs, or error messages. Mint it, use it, drop it.
+2. **The JWT stays server-side, with one explicit exception.** It is never put in props, RSC
+   payloads, logs, or error messages. The only path to the browser is `POST /api/token`,
+   reached from the signed-in `/api-token` page: POST-only (so it never lands in a URL,
+   history, or prefetch), same-origin checked, `cache-control: no-store`, minted per
+   request, held in page memory only, and never logged or persisted. Mint it, use it,
+   drop it.
 3. `API_URL` and `AUTH_SERVICE_URL` are server-only. No secret in `NEXT_PUBLIC_*`.
    Server modules import `server-only`.
 4. **The BFF is deny-by-default.** A request is forwarded only if `method + path` matches
@@ -232,7 +242,8 @@ those files; re-run the CLI instead.
 - **2026-11-13** — Same-origin proxy instead of CORS/`SameSite=None` (different domains).
 - **2026-11-13** — BFF-only tokens: server mints via jwt plugin `GET /api/auth/token`
   from the session cookie. Browser never sees a JWT. (Verified: GET returns 401 without a
-  session; POST is not routed — a bare 404.)
+  session; POST is not routed — a bare 404.) *Superseded 2026-11-15 by the explicit
+  `/api-token` page below; the BFF still never exposes one.*
 - **2026-11-13** — Cache Components stays enabled (scaffold default). Auth-reading routes
   set `export const instant = false` and block on the server instead of streaming a shell
   that anonymous users should not see.
@@ -265,7 +276,8 @@ those files; re-run the CLI instead.
   part of the current scope.
 - **2026-11-14** — App shell follows the Cloudflare dashboard reference: near-black canvas,
   a darker sidebar, hairline borders, and a raised pill for the active row. Two destinations
-  only — Home and Connections. `/dashboard` is kept as a redirect to `/home`.
+  only — Home and Connections. `/dashboard` is kept as a redirect to `/home`. *(Third
+  destination — API token — added 2026-11-15.)*
 - **2026-11-14** — The sidebar rail preference is a cookie (`ryld_sidebar`), not
   localStorage, so `app/(app)/layout.tsx` can render the first paint at the right width. The
   shell is a client component only where it needs state (collapse, search, drawer); page
@@ -351,6 +363,13 @@ those files; re-run the CLI instead.
   proxy (`ec33cdc2-44bf-4310-a85c-5e362510657c`). `lib/auth/server.ts` validates both ids as
   `z.uuid()`, so a future generator change fails closed with a 502 instead of silently
   mis-keying identity. The API's connection ids were already UUIDs and are unchanged.
+- **2026-11-15** — Added an **API token** destination after Connections (owner request) so a
+  signed-in user can call the API service from a terminal. This is the first intentional
+  exception to the BFF-only token rule: `POST /api/token` mints the JWT on demand, with a
+  same-origin `Origin` check, `no-store`, and no logging. The page keeps it in React state
+  only (never `localStorage`/`sessionStorage`/URL), masks it until Reveal, and shows its
+  `exp`-derived expiry. GET and all other verbs are not exported, so minting cannot be
+  triggered by a link or prefetch. The BFF itself still never returns a JWT.
 
 ## 11. Deferred / follow-ups
 

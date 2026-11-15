@@ -17,7 +17,8 @@ import { log, newRequestId } from "@/lib/log";
 
 /**
  * The only browser-facing API surface. The browser never talks to the API
- * service directly and never sees a JWT.
+ * service directly and never sees a JWT here (`/api/token` is the one explicit
+ * exception — see AGENTS.md §5.2).
  *
  * Three shapes, all registered in `lib/api/endpoints.ts`:
  *
