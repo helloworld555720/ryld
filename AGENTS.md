@@ -68,6 +68,13 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
   `GET /api/backend/oauth/:provider/callback`, which mints the JWT again, exchanges the
   code upstream, and `303`s back to `/connections`. Never let the browser call the API
   service directly, and never follow the consent URL server-side.
+- **Connect opens in a popup.** A plain left click sets a short-lived
+  `ryld_oauth_popup` marker cookie and opens the start URL in a named window. The provider
+  can only redirect to the one registered callback, so that marker is how the callback
+  knows to answer `303 /connections/complete?...` instead of `/connections`: a bare page
+  that posts a same-origin `ryld:oauth` message to its opener and closes. The opener maps
+  the message through the provider registry, toasts, and calls `router.refresh()`.
+  Modifier/middle clicks and a blocked popup keep the original full-page redirect.
 - The JWT is minted **per request, server-side**: read the session cookie →
   `GET {AUTH_SERVICE_URL}/api/auth/token` → `{ token }` → attach as Bearer.
   (Verified: the endpoint is GET-only; a POST returns a bare 404.)
@@ -80,6 +87,7 @@ app/
   auth/[path]/             better-auth-ui screens (sign-in, sign-up, forgot/reset, verify)
   (app)/                   authenticated area: layout guard + shell
     api-token/             developer token page (explicit JWT exception, see §5.2)
+  connections/complete/    popup completion page: messages the opener, closes
   api/auth/[...all]/       auth proxy route handler
   api/backend/[...path]/   BFF proxy, allowlist-only
   api/token/               POST-only JWT mint for the token page
@@ -104,6 +112,8 @@ lib/
   redirect.ts              safeRedirect() — same-origin relative paths only
   csp.ts                   nonce-based Content-Security-Policy (pure, unit-tested)
   jwt.ts                   unverified `exp` read for the token page (never logs)
+  connection-notice.ts     callback status → fixed user copy (never echoes input)
+  oauth-popup.ts           popup cookie/message constants shared with the BFF
   nav.ts                   nav registry (Home, Connections, API token)
   ui-prefs.ts              cookie-backed UI preferences (sidebar rail)
   query-client.ts          one QueryClient per request / browser singleton
@@ -370,6 +380,23 @@ those files; re-run the CLI instead.
   only (never `localStorage`/`sessionStorage`/URL), masks it until Reveal, and shows its
   `exp`-derived expiry. GET and all other verbs are not exported, so minting cannot be
   triggered by a link or prefetch. The BFF itself still never returns a JWT.
+- **2026-11-16** — Connect/Add account now opens the provider consent in a **popup**. The
+  provider only redirects to the single registered `redirect_uri`, so the flow is signalled
+  by a short-lived `ryld_oauth_popup` cookie (a per-flow UUID, `Max-Age=600`, `SameSite=Lax`)
+  written by `components/app/connect-anchor.tsx` immediately before `window.open`. The
+  callback reads a non-empty marker and answers `303 /connections/complete?...` instead of
+  `/connections`, clearing the marker there. That page (`app/connections/complete`) posts a
+  same-origin `ryld:oauth` message to the opener and closes itself, falling back to the
+  normal `/connections?…` navigation after 800 ms if the browser refuses `window.close()`
+  or there is no opener. `components/app/connections-oauth-listener.tsx` validates the
+  message origin, maps the status through `connectionNotice()` (never echo), toasts, and
+  calls `router.refresh()` so the new account appears without a reload. One anchor stays the
+  control: modifier/middle clicks and a blocked popup keep the original full-page `303`, and
+  a close-poll clears the marker (only for its own flow value) if the user abandons the
+  popup. Verified in a real browser: the popup survives the Google cross-origin round trip
+  with `window.opener` intact (no COOP on either side); a fake `code` produced the parent
+  toast and left the list unchanged. Note for future testing: the browser-automation
+  `navigate` call severs `window.opener`, so popups must be driven from inside.
 
 ## 11. Deferred / follow-ups
 

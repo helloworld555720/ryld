@@ -2,14 +2,17 @@ import { CircleCheck, TriangleAlert } from "lucide-react";
 
 import { ConnectionCard } from "@/components/app/connection-card";
 import { ConnectionTabs } from "@/components/app/connection-tabs";
+import { ConnectionsOAuthListener } from "@/components/app/connections-oauth-listener";
 import { EmptyState } from "@/components/app/empty-state";
 import { PageHeader } from "@/components/app/page-header";
 import { listConnections } from "@/lib/api/connections";
 import type { Connection } from "@/lib/api/schemas/connections";
 import {
-  CONNECTION_PROVIDERS,
+  connectionNotice,
+  type ConnectionNotice,
+} from "@/lib/connection-notice";
+import {
   countAccountsByCategory,
-  getConnectionProvider,
   groupConnectionsByProvider,
   resolveConnectionCategory,
 } from "@/lib/connections";
@@ -23,59 +26,11 @@ type ConnectionsSearchParams = Record<
   string | string[] | undefined
 >;
 
-interface Notice {
-  tone: "success" | "error";
-  message: string;
-}
-
 function firstValue(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/**
- * The callback lands here with `?connected=<id>` or `?error=<code>`. Both are
- * attacker-controllable query values, so nothing is ever echoed: every message
- * is derived from the provider registry or a fixed string.
- */
-function readNotice(params: ConnectionsSearchParams): Notice | null {
-  const connected = getConnectionProvider(firstValue(params.connected) ?? "");
-  if (connected) {
-    return { tone: "success", message: `${connected.label} is connected.` };
-  }
-
-  const error = firstValue(params.error);
-  if (!error) return null;
-
-  if (error === "access_denied") {
-    return {
-      tone: "error",
-      message: "Authorization was cancelled. Nothing was changed.",
-    };
-  }
-
-  if (error === "session_expired") {
-    return {
-      tone: "error",
-      message: "Your session expired before authorization finished. Please try again.",
-    };
-  }
-
-  for (const provider of CONNECTION_PROVIDERS) {
-    if (error === `${provider.id}_failed` || error === `${provider.id}_start_failed`) {
-      return {
-        tone: "error",
-        message: `We couldn't finish connecting ${provider.label}. Please try again.`,
-      };
-    }
-  }
-
-  return {
-    tone: "error",
-    message: "We couldn't finish that connection. Please try again.",
-  };
-}
-
-function NoticeBanner({ notice }: { notice: Notice }) {
+function NoticeBanner({ notice }: { notice: ConnectionNotice }) {
   const isSuccess = notice.tone === "success";
   const Icon = isSuccess ? CircleCheck : TriangleAlert;
 
@@ -117,7 +72,10 @@ export default async function ConnectionsPage({
     readConnections(),
   ]);
 
-  const notice = readNotice(params);
+  const notice = connectionNotice({
+    connected: firstValue(params.connected),
+    error: firstValue(params.error),
+  });
 
   // `?tab=` is a public URL parameter: resolve it against the registry so an
   // unknown value renders the default tab instead of an empty page.
@@ -131,6 +89,8 @@ export default async function ConnectionsPage({
 
   return (
     <div className="space-y-8">
+      <ConnectionsOAuthListener />
+
       <PageHeader
         eyebrow="Workspace"
         title="Connections"

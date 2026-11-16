@@ -175,7 +175,7 @@ Verified against the dev server at 14:04 UTC:
 | Browser call | Upstream | Behaviour |
 | --- | --- | --- |
 | `GET /api/backend/connections/youtube/start` | `POST /connections/youtube/start` with `{"redirect_uri": "<origin>/api/backend/oauth/youtube/callback"}` | `303` to the consent screen after the `Location` host check; anonymous → `307` to sign-in; unknown provider or traversal → `404` |
-| `GET /api/backend/oauth/youtube/callback` | `POST /connections/youtube/complete` with `code/state/iss/scope/redirect_uri` | `303` to `/connections?connected=youtube` or `?error=…`; never JSON |
+| `GET /api/backend/oauth/youtube/callback` | `POST /connections/youtube/complete` with `code/state/iss/scope/redirect_uri` | `303` to `/connections?connected=youtube` or `?error=…`; never JSON. With a non-empty `ryld_oauth_popup` cookie it answers `/connections/complete?…` instead and clears the cookie, so the popup can message its opener and close |
 | `GET /api/backend/connections` | `GET /connections/` | validated JSON, `cache-control: no-store`; items are `{ id, type }` |
 
 Callback outcomes verified: fake code → `?error=youtube_failed`; `error=access_denied` →

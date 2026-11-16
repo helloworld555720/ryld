@@ -1,5 +1,6 @@
 import { Plus } from "lucide-react";
 
+import { ConnectAnchor } from "@/components/app/connect-anchor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -157,13 +158,13 @@ export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
           variant={isConnected ? "outline" : "default"}
         >
           {/*
-           * Plain anchor, not next/link: this is a route handler that answers
-           * with a 303 to the provider, so the browser must perform a real
-           * navigation.
+           * A real anchor first: without JS, or with a modifier/middle click,
+           * this is the original full-page 303 navigation. A plain left click
+           * is upgraded to a popup by the client component.
            */}
-          <a
+          <ConnectAnchor
             href={`/api/backend/connections/${provider.id}/start`}
-            aria-label={
+            label={
               isConnected
                 ? `Add another ${provider.label} account`
                 : `Connect ${provider.label}`
@@ -177,7 +178,7 @@ export function ConnectionCard({ provider, accounts }: ConnectionCardProps) {
             ) : (
               "Connect"
             )}
-          </a>
+          </ConnectAnchor>
         </Button>
       </CardFooter>
     </Card>

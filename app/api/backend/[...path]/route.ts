@@ -14,6 +14,7 @@ import { getConnectionProvider, type ConnectionProvider } from "@/lib/connection
 import { getServerEnv } from "@/lib/env";
 import { ApiError, type ApiErrorCode, toErrorResponse } from "@/lib/errors";
 import { log, newRequestId } from "@/lib/log";
+import { OAUTH_POPUP_COOKIE } from "@/lib/oauth-popup";
 
 /**
  * The only browser-facing API surface. The browser never talks to the API
@@ -33,6 +34,8 @@ import { log, newRequestId } from "@/lib/log";
  */
 const TIMEOUT_MS = 10_000;
 const RETURN_PATH = "/connections";
+/** Bare completion page rendered inside the popup; it messages the opener. */
+const POPUP_RETURN_PATH = "/connections/complete";
 
 /** Query length caps: this endpoint is reachable by anyone, not just Google. */
 const MAX_CODE_LENGTH = 2_048;
@@ -57,23 +60,51 @@ function errorResponse(
   });
 }
 
+/** A non-empty marker cookie means the flow was started in a popup. */
+function isPopupRequest(request: NextRequest): boolean {
+  const value = request.cookies.get(OAUTH_POPUP_COOKIE)?.value;
+  return typeof value === "string" && value.length > 0;
+}
+
 /** A navigation back into the app, carrying only a status flag. */
 function connectionsRedirect(
   request: NextRequest,
   params: Record<string, string>,
 ): NextResponse {
-  const url = new URL(RETURN_PATH, request.url);
+  /*
+   * The connect anchor sets this marker before opening the popup. The provider
+   * only redirects to the one registered callback, so this cookie is the only
+   * way the callback can tell it is running in a popup.
+   */
+  const popup = isPopupRequest(request);
+  const url = new URL(popup ? POPUP_RETURN_PATH : RETURN_PATH, request.url);
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, value);
   }
 
   const response = NextResponse.redirect(url, 303);
+  if (popup) {
+    response.cookies.set({
+      name: OAUTH_POPUP_COOKIE,
+      value: "",
+      path: "/",
+      maxAge: 0,
+      sameSite: "lax",
+      httpOnly: false,
+    });
+  }
   response.headers.set("cache-control", "no-store");
   return response;
 }
 
 /** The user clicked Connect with an expired session; send them to sign in. */
 function signInRedirect(request: NextRequest): NextResponse {
+  // Inside a popup a sign-in form would be a dead end: close it and let the
+  // opener explain why. The parent refresh will redirect if it is also expired.
+  if (isPopupRequest(request)) {
+    return connectionsRedirect(request, { error: "session_expired" });
+  }
+
   const url = new URL("/auth/sign-in", request.url);
   url.searchParams.set("redirectTo", RETURN_PATH);
 
