@@ -83,6 +83,18 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
   fields are forwarded to the API's `POST /jobs/`. The API calls the resource a *job*;
   this app never does — the browser path and every identifier here say project, and
   the rename lives in `lib/api/endpoints.ts`.
+- **A Google Drive source is a file you already own.** The registry declares a
+  `gdrive-account` field (`conn_id`, defaulting to the first connected Drive account) and a
+  `gdrive-file` field (`file_id`), so the payload is `{type, conn_id, file_id}`. The file is
+  chosen with Google's Picker in the browser: `components/app/google-drive-file-picker.tsx`
+  loads `https://apis.google.com/js/api.js` on demand (`gapi.load("picker")`), fetches
+  `GET /api/backend/connections/gdrive/config` (API key + Cloud project number, sent as
+  `appId`) and `POST /api/backend/connections/gdrive/access-token`, then opens
+  `DocsView(ViewId.DOCS).setMode(LIST)`. Only the picked `{id, name}` reaches the form.
+  Changing the account clears the file so a file id from another account can never be
+  submitted. CSP keeps the Picker iframe working with one `frame-src` host and nothing else:
+  the script is appended dynamically, so `strict-dynamic` trusts it and `script-src` gained
+  no remote host.
 - No refresh tokens, no token storage, no client secret.
 
 ## 4. Repo layout
@@ -100,7 +112,8 @@ app/
 proxy.ts                   Next 16's renamed middleware: optimistic cookie check only
 components/
   ui/                      shadcn primitives (generated, don't hand-edit upstream files)
-  app/                     shell, nav, page-header, empty/error states
+  app/                     shell, nav, page-header, empty/error states,
+                           create-project-form, google-drive-file-picker
   auth/                    better-auth-ui components (generated)
   providers.tsx            QueryClient + AuthProvider (client boundary)
 lib/
@@ -112,7 +125,8 @@ lib/
   api/callback-url.ts      the redirect_uri both hops must agree on
   api/connections.ts       RSC read of the caller's connections
   api/schemas/             zod schemas for upstream payloads
-  projects.ts              input/output registries + draft builder (client-safe)
+  projects.ts              input/output registries, field controls, draft builder
+                           (client-safe)
   connections.ts           provider + category registry, grouping helpers
   env.ts                   zod-validated env, server/public split
   errors.ts                ApiError, error mapping, safe messages
@@ -140,6 +154,12 @@ docs/
    history, or prefetch), same-origin checked, `cache-control: no-store`, minted per
    request, held in page memory only, and never logged or persisted. Mint it, use it,
    drop it.
+   **Second, narrower exception — the Google Picker.** Google's Picker runs in the browser
+   and needs a Google OAuth token, so `POST /api/backend/connections/gdrive/access-token`
+   relays `{"conn_id"}` to the API and returns that connection's `access_token` (scope
+   `drive.file`). It is scoped to one provider's files, fetched per Picker open, kept in the
+   click handler's local scope only, `no-store`, and never logged, stored, or put in a URL.
+   It is not our JWT and grants nothing else in this app.
 3. `API_URL` and `AUTH_SERVICE_URL` are server-only. No secret in `NEXT_PUBLIC_*`.
    Server modules import `server-only`.
 4. **The BFF is deny-by-default.** A request is forwarded only if `method + path` matches
@@ -432,10 +452,33 @@ those files; re-run the CLI instead.
   `307` to `accounts.google.com` with scope `https://www.googleapis.com/auth/drive.file`, and
   `complete` with a fake code answers `200 {"connected":false}`. A first probe the same day
   had been rejected with `400 invalid redirect uri`, so the API allowlist was extended in
-  between. **Remaining blocker:** Google's OAuth client does not list our callback — the
-  consent screen stops on `Error 400: redirect_uri_mismatch`. Until it is registered the
-  popup lands on Google's error page; every hop on our side and on the API works. See
-  `docs/api-inventory.md`.
+  between. The next blocker was Google's OAuth client not listing our callback
+  (`Error 400: redirect_uri_mismatch`); **resolved later the same day** — see the Drive
+  Projects entry below. See `docs/api-inventory.md`.
+- **2026-11-17** — Added **Google Drive as a Projects source**, with Google's Picker as the
+  file chooser (owner request). `lib/projects.ts` grew a `control` discriminator on every
+  field — `text` (uses `inputType`), `gdrive-account`, `gdrive-file` — so the form renders a
+  kind from its registry entry alone and a new source or destination never touches the form
+  component. A Drive project is `{type, conn_id, file_id}`; `conn_id` defaults to the first
+  connected Drive account (`initialFieldValues`), and changing the account clears the picked
+  file so an id from another account cannot be submitted. The Picker is opened per click
+  from `components/app/google-drive-file-picker.tsx`: `api.js` is appended dynamically
+  (`gapi.load("picker")`), then `PickerBuilder` gets `setOAuthToken` (from the new
+  `POST /api/backend/connections/gdrive/access-token`), `setDeveloperKey` and `setAppId`
+  (both from the new `GET /api/backend/connections/gdrive/config`), with
+  `DocsView(ViewId.DOCS).setMode(LIST)`. **This is the second token exception in §5.2** and
+  the narrower one: it is Google's `drive.file` token, not our JWT, fetched per open,
+  memory-only, `no-store`, never logged. `project_number` is a number upstream and is
+  normalised to a string because `setAppId` takes one. CSP gained exactly one host —
+  `frame-src https://docs.google.com` — because the Picker renders in an iframe; the script
+  needs no host thanks to `strict-dynamic`, and `script-src` still has no `unsafe-inline`.
+  Verified live 2026-11-17: config `200`, access-token `200`, unknown connection `502`,
+  invalid body `400`, anonymous `401`, wrong verbs `404`; a Drive project created `201` and
+  was deleted; the token carries exactly `drive.file` and answers `{"files":[]}` until the
+  Picker grants a file. The form shows "Choose a file." when submitting without one and
+  drops the error when the source changes. Not verifiable in automation: picking a file
+  needs a browser signed into the connected Google account, so the Picker iframe renders
+  Google's sign-in page instead. See `docs/api-inventory.md`.
 
 ## 11. Deferred / follow-ups
 

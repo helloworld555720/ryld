@@ -49,6 +49,11 @@ export function buildCsp({ nonce, isDev }: CspOptions): string {
     // the HMR websocket.
     `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
 
+    // The Google Picker dialog renders in an iframe hosted on docs.google.com.
+    // Nothing else may be framed; the Picker script itself is loaded through a
+    // dynamically created <script>, which `strict-dynamic` trusts.
+    "frame-src https://docs.google.com",
+
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",

@@ -12,12 +12,20 @@ import { z } from "zod";
 
 export type ProjectFieldInputType = "url" | "text";
 
+/**
+ * How the form renders a field. `text` uses its HTML `inputType`; the gdrive
+ * controls are driven by the Picker and by the caller's connected accounts.
+ */
+export type ProjectFieldControl = "text" | "gdrive-account" | "gdrive-file";
+
 export interface ProjectField {
   /** Key in the upstream object for this side, e.g. `url`. */
   name: string;
   label: string;
-  /** HTML input type used to render it. */
-  inputType: ProjectFieldInputType;
+  /** Which UI control renders this field. */
+  control: ProjectFieldControl;
+  /** HTML input type for `control: "text"`. */
+  inputType?: ProjectFieldInputType;
   placeholder?: string;
   description?: string;
   /**
@@ -76,10 +84,38 @@ export const PROJECT_INPUT_KINDS: readonly ProjectKind[] = [
       {
         name: "url",
         label: "Video URL",
+        control: "text",
         inputType: "url",
         placeholder: "https://www.youtube.com/watch?v=…",
         description: "A youtube.com or youtu.be link.",
         schema: youtubeUrl,
+      },
+    ],
+  },
+  {
+    /*
+     * A Drive source is a file that already exists in a connected account. The
+     * Picker fills `file_id`, and `conn_id` selects the account it belongs to;
+     * both are forwarded so the API can read the file with that connection's
+     * token.
+     */
+    id: "gdrive",
+    label: "Google Drive",
+    description: "Use a file from a connected Drive account.",
+    fields: [
+      {
+        name: "conn_id",
+        label: "Google Drive account",
+        control: "gdrive-account",
+        description: "The connected account the file belongs to.",
+        schema: z.uuid({ error: "Choose a Google Drive account." }),
+      },
+      {
+        name: "file_id",
+        label: "File",
+        control: "gdrive-file",
+        description: "Only files Ryld can access are listed.",
+        schema: z.string().trim().min(1, "Choose a file."),
       },
     ],
   },
@@ -106,6 +142,31 @@ export function getProjectOutputKind(id: string): ProjectKind | undefined {
 /** Blank values for a kind's fields, used when the selection changes. */
 export function emptyFieldValues(kind: ProjectKind): Record<string, string> {
   return Object.fromEntries(kind.fields.map((field) => [field.name, ""]));
+}
+
+/** The minimum a connected Drive account has to expose to the form. */
+export interface GdriveAccount {
+  id: string;
+}
+
+/**
+ * Starting values for a kind. A gdrive source needs a connection id before the
+ * Picker can mint a token, so it defaults to the first connected account; the
+ * user can change it when there is more than one.
+ */
+export function initialFieldValues(
+  kind: ProjectKind,
+  gdriveAccounts: readonly GdriveAccount[] = [],
+): Record<string, string> {
+  const values = emptyFieldValues(kind);
+  const first = gdriveAccounts[0];
+  if (!first) return values;
+
+  for (const field of kind.fields) {
+    if (field.control === "gdrive-account") values[field.name] = first.id;
+  }
+
+  return values;
 }
 
 export interface ProjectDraftValues {

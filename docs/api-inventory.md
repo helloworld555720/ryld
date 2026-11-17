@@ -180,11 +180,13 @@ allowlist **accepts our BFF callback**:
 | other provider names (`google-drive`, `google_drive`, `drive`, `googledrive`, `vimeo`, `dropbox`, `s3`) | `404` |
 
 An earlier probe the same day returned `400 "invalid redirect uri"` for every gdrive
-callback; the API allowlist was updated between the two. The **remaining** blocker is
-Google's OAuth client: driving the UI flow now reaches Google's consent screen and stops on
-`Error 400: redirect_uri_mismatch`, with the error page naming
-`http://localhost:3000/api/backend/oauth/gdrive/callback`. Google's client must list that
-URI. Until it does, the popup lands on Google's error page; the API-side hops are working.
+callback; the API allowlist was updated between the two. Driving the UI flow later that day
+stopped on Google's `Error 400: redirect_uri_mismatch`, naming
+`http://localhost:3000/api/backend/oauth/gdrive/callback`. **Resolved 2026-11-17:** a real
+gdrive connection now exists for the probe account
+(`23d7949e-0f85-4a64-ab5b-a855e39fc3b5`) and `/connections/gdrive/access-token` mints a
+Google token for it with the `drive.file` scope, so Google's client lists the callback and
+the whole popup flow completes.
 
 The UI entry lives in `lib/connections.ts` (`gdrive`, filed under `storage`) and the BFF
 paths are generated: `/api/backend/connections/gdrive/start` and
@@ -241,6 +243,51 @@ Observed validation:
   UX guard, not an upstream requirement.
 - Creation leaves `status: "draft"`. No transition into processing has been observed.
 
+### Google Drive sources (verified 2026-11-17)
+
+A Drive source is `{"type":"gdrive","conn_id":"<uuid>","file_id":"<Drive file id>"}`, so the
+API can read the file with that connection's token. Verified live end to end through the BFF
+with a throwaway file id:
+
+| Call | Result |
+| --- | --- |
+| `POST /jobs/` + `{"input":{"type":"gdrive","conn_id":"23d7949e-…","file_id":"1AbCdEfGhIjKlMnOpQrStUvWxYz"},"output":{"type":"s3"}}` | `201` with `{"input":{"type":"gdrive","file_id":"…","conn_id":"…"},"output":{"type":"s3"},"id":"<uuid>","status":"draft","source":null}` (created job deleted afterwards) |
+| same with `conn_id: ""`, a non-UUID `conn_id`, or a missing `file_id` | `422` |
+
+The file id is **not** validated upstream at creation time — an invented id is accepted, so
+the Picker's own list is what makes the id real. `conn_id` must be a uuid the caller owns;
+an unknown one is accepted by `/jobs/` and can only fail later during processing.
+
+### Google Drive Picker credential endpoints (probing 2026-11-17)
+
+Two Bearer-protected endpoints feed the Google Picker in the browser:
+
+| Request | Result |
+| --- | --- |
+| `GET /connections/gdrive/config` | `200 {"api_key":"AIza…","project_number":801901239085}` — the Cloud project's browser key and its project number (the Picker wants that string as `appId`) |
+| `POST /connections/gdrive/access-token` + `{"conn_id":"<uuid>"}` | `200 {"access_token":"ya29.…"}` |
+| `POST /connections/gdrive/access-token` with an unknown (but valid) uuid | `404 {"detail":"Google Drive connection not found"}` |
+| `POST` with a missing or non-UUID `conn_id` | `422` |
+| `GET` on either, or `POST /config` | `405` |
+
+The minted token was checked against `https://oauth2.googleapis.com/tokeninfo`:
+
+- `scope` = `https://www.googleapis.com/auth/drive.file` (only files the app created or the
+  user explicitly opened, which is why `GET /drive/v3/files` returns `{"files":[]}` until the
+  Picker grants access),
+- `aud` = the Cloud project's OAuth client (`801901239085-…apps.googleusercontent.com`),
+- `exp` ≈ one hour after issue.
+
+Both are exposed as explicit `json` entries in `lib/api/endpoints.ts`
+(`connections.gdrive.config`, `connections.gdrive.access-token`), validated by
+`gdriveConfigSchema` / `gdriveAccessTokenRequestSchema` / `gdriveAccessTokenSchema` in
+`lib/api/schemas/connections.ts`, and answered `no-store`. Verified through the BFF:
+authenticated config `200`, anonymous `401`, unknown connection `502`, invalid body `400`,
+wrong verb `404`.
+
+Note `project_number` is a **number** upstream and is normalised to a string by the schema,
+because `PickerBuilder.setAppId` takes a string.
+
 ## Open questions
 
 1. What does `complete` return on **success**? Presumably `{"connected":true}`, plus
@@ -250,8 +297,9 @@ Observed validation:
    flow? Neither is observable while all failures return `200 false`.
 4. Is a disconnect endpoint planned? `DELETE /connections/{provider}` is `404` today.
 5. Are there other providers besides YouTube? `youtube` and `gdrive` both resolve upstream;
-   gdrive accepts our BFF callback (`307` to Google) and is blocked only by Google's client
-   redirect allowlist (2026-11-17). Everything else probed is `404`. The UI reads
+   gdrive accepts our BFF callback (`307` to Google) and a real gdrive connection now exists
+   for the probe account (2026-11-17), so Google's client accepts our
+   `redirect_uri` too. Everything else probed is `404`. The UI reads
    `lib/connections.ts`, and each provider needs a BFF allowlist entry plus its
    `allowedRedirectHosts`.
 6. Does `complete` add an account or replace the existing one for the same provider? The UI

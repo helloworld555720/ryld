@@ -64,6 +64,29 @@ describe("matchEndpoint", () => {
     expect(matchEndpoint("POST", "/projects/1")).toBeNull();
   });
 
+  it("matches the Drive Picker config and access-token calls", () => {
+    const config = matchEndpoint("GET", "/connections/gdrive/config");
+
+    expect(config?.endpoint.kind).toBe("json");
+    expect(config?.endpoint.response).toBeDefined();
+    expect(buildUpstreamPath(config!)).toBe("/connections/gdrive/config");
+
+    const token = matchEndpoint("POST", "/connections/gdrive/access-token");
+
+    expect(token?.endpoint.kind).toBe("json");
+    expect(token?.endpoint.request).toBeDefined();
+    expect(token?.endpoint.response).toBeDefined();
+    expect(buildUpstreamPath(token!)).toBe("/connections/gdrive/access-token");
+  });
+
+  it("keeps the Drive Picker calls on their exact verbs", () => {
+    expect(matchEndpoint("POST", "/connections/gdrive/config")).toBeNull();
+    expect(matchEndpoint("GET", "/connections/gdrive/access-token")).toBeNull();
+    expect(
+      matchEndpoint("DELETE", "/connections/gdrive/access-token"),
+    ).toBeNull();
+  });
+
   it("rejects a method the endpoint did not register", () => {
     expect(matchEndpoint("POST", "/connections/youtube/start")).toBeNull();
     expect(matchEndpoint("POST", "/oauth/youtube/callback")).toBeNull();

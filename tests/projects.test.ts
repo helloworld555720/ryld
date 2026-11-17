@@ -8,11 +8,21 @@ import {
   PROJECT_INPUT_KINDS,
   PROJECT_OUTPUT_KINDS,
   buildProjectDraft,
+  initialFieldValues,
   isYouTubeHost,
 } from "@/lib/projects";
 
 const example = {
   input: { url: "https://youtu.be/sKJvJCsey84", type: "youtube" },
+  output: { type: "s3" },
+};
+
+const gdriveExample = {
+  input: {
+    type: "gdrive",
+    conn_id: "23d7949e-0f85-4a64-ab5b-a855e39fc3b5",
+    file_id: "1AbCdEfGhIjKlMnOpQrStUvWxYz",
+  },
   output: { type: "s3" },
 };
 
@@ -68,6 +78,38 @@ describe("projectCreateSchema", () => {
       output: { type: "s3" },
     });
   });
+
+  it("accepts a Google Drive source with a connection and file id", () => {
+    expect(projectCreateSchema.safeParse(gdriveExample).success).toBe(true);
+  });
+
+  it("requires a real connection id and a file id for Drive", () => {
+    for (const input of [
+      { type: "gdrive", conn_id: "not-a-uuid", file_id: "file" },
+      { type: "gdrive", conn_id: "", file_id: "file" },
+      {
+        type: "gdrive",
+        conn_id: "23d7949e-0f85-4a64-ab5b-a855e39fc3b5",
+        file_id: "",
+      },
+      { type: "gdrive", conn_id: "23d7949e-0f85-4a64-ab5b-a855e39fc3b5" },
+    ]) {
+      expect(
+        projectCreateSchema.safeParse({ ...gdriveExample, input }).success,
+        JSON.stringify(input),
+      ).toBe(false);
+    }
+  });
+
+  it("drops extra keys on a Drive input", () => {
+    const parsed = projectCreateSchema.safeParse({
+      ...gdriveExample,
+      input: { ...gdriveExample.input, file_name: "not forwarded" },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data).toEqual(gdriveExample);
+  });
 });
 
 describe("projectSchema", () => {
@@ -116,6 +158,51 @@ describe("buildProjectDraft", () => {
     });
     expect(projectCreateSchema.safeParse(draft).success).toBe(false);
   });
+
+  it("sends the Drive connection and file, and nothing else", () => {
+    const draft = buildProjectDraft({
+      inputType: "gdrive",
+      outputType: "s3",
+      input: {
+        conn_id: gdriveExample.input.conn_id,
+        file_id: gdriveExample.input.file_id,
+        file_name: "not forwarded",
+      },
+      output: {},
+    });
+
+    expect(draft).toEqual(gdriveExample);
+    expect(projectCreateSchema.safeParse(draft).success).toBe(true);
+  });
+});
+
+describe("initialFieldValues", () => {
+  const gdriveKind = PROJECT_INPUT_KINDS.find((kind) => kind.id === "gdrive");
+
+  it("defaults the Drive account to the first connected one", () => {
+    const values = initialFieldValues(gdriveKind!, [
+      { id: "23d7949e-0f85-4a64-ab5b-a855e39fc3b5" },
+    ]);
+
+    expect(values).toEqual({
+      conn_id: "23d7949e-0f85-4a64-ab5b-a855e39fc3b5",
+      file_id: "",
+    });
+  });
+
+  it("leaves the Drive account blank when nothing is connected", () => {
+    const values = initialFieldValues(gdriveKind!);
+
+    expect(values).toEqual({ conn_id: "", file_id: "" });
+  });
+
+  it("does not invent values for kinds without a Drive account", () => {
+    const youtube = PROJECT_INPUT_KINDS.find((kind) => kind.id === "youtube");
+
+    expect(initialFieldValues(youtube!, [{ id: "ignored" }])).toEqual({
+      url: "",
+    });
+  });
 });
 
 describe("registries", () => {
@@ -138,6 +225,25 @@ describe("registries", () => {
       const names = kind.fields.map((field) => field.name);
       expect(names).not.toContain("type");
       expect(new Set(names).size).toBe(names.length);
+    }
+  });
+
+  it("offers YouTube and Google Drive as sources", () => {
+    const ids = PROJECT_INPUT_KINDS.map((kind) => kind.id);
+
+    expect(ids).toContain("youtube");
+    expect(ids).toContain("gdrive");
+  });
+
+  it("declares a control for every field that the form understands", () => {
+    const controls = new Set(["text", "gdrive-account", "gdrive-file"]);
+
+    for (const kind of kinds) {
+      for (const field of kind.fields) {
+        expect(controls.has(field.control), `${kind.id}.${field.name}`).toBe(
+          true,
+        );
+      }
     }
   });
 });

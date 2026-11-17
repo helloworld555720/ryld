@@ -2,7 +2,12 @@ import "server-only";
 
 import type { ZodType } from "zod";
 
-import { connectionsListSchema } from "@/lib/api/schemas/connections";
+import {
+  connectionsListSchema,
+  gdriveAccessTokenRequestSchema,
+  gdriveAccessTokenSchema,
+  gdriveConfigSchema,
+} from "@/lib/api/schemas/connections";
 import {
   projectCreateSchema,
   projectSchema,
@@ -132,6 +137,28 @@ export const BFF_ENDPOINTS: readonly EndpointEntry[] = [
     upstreamPath: "/jobs/",
     request: projectCreateSchema,
     response: projectSchema,
+  },
+  /*
+   * Google Drive Picker support. The config is public (an API key and a cloud
+   * project number); the access token is a Google OAuth token for the
+   * `drive.file` scope, minted per Picker open for one connection. Both are
+   * gdrive-specific capabilities, not per-provider OAuth endpoints, so they
+   * are explicit entries rather than generated from the provider registry.
+   */
+  {
+    id: "connections.gdrive.config",
+    kind: "json",
+    method: "GET",
+    pattern: "/connections/gdrive/config",
+    response: gdriveConfigSchema,
+  },
+  {
+    id: "connections.gdrive.access-token",
+    kind: "json",
+    method: "POST",
+    pattern: "/connections/gdrive/access-token",
+    request: gdriveAccessTokenRequestSchema,
+    response: gdriveAccessTokenSchema,
   },
   ...connectionEntries,
 ];

@@ -37,9 +37,14 @@ describe("buildCsp", () => {
     expect(style).not.toContain("nonce");
   });
 
-  it("has no wildcard or remote origin anywhere", () => {
+  it("does not let any origin but the Picker be framed", () => {
+    expect(directive(prod, "frame-src")).toBe("frame-src https://docs.google.com");
+  });
+
+  it("allows no wildcard and no remote origin except the Picker frame", () => {
     expect(prod).not.toContain("*");
-    expect(prod).not.toMatch(/https?:\/\//);
+    const origins = prod.match(/https?:\/\/[^\s;]+/g) ?? [];
+    expect(origins).toEqual(["https://docs.google.com"]);
   });
 
   it("blocks framing, objects, and base/form hijacking", () => {
