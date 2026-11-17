@@ -34,6 +34,15 @@ describe("connection categories", () => {
     );
   });
 
+  it("puts Google Drive in Storage", () => {
+    const gdrive = CONNECTION_PROVIDERS.find(
+      (provider) => provider.id === "gdrive",
+    );
+
+    expect(gdrive?.category).toBe("storage");
+    expect(gdrive?.label).toBe("Google Drive");
+  });
+
   it("resolves a known tab", () => {
     expect(resolveConnectionCategory("storage").id).toBe("storage");
   });

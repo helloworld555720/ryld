@@ -25,6 +25,22 @@ describe("matchEndpoint", () => {
     expect(buildUpstreamPath(match!)).toBe("/connections/youtube/complete");
   });
 
+  it("derives both Google Drive paths from the provider registry", () => {
+    const start = matchEndpoint("GET", "/connections/gdrive/start");
+
+    expect(start?.params).toEqual({ provider: "gdrive" });
+    expect(start?.endpoint.kind).toBe("oauth-start");
+    expect(start?.endpoint.upstreamMethod).toBe("POST");
+    expect(start?.endpoint.redirectHosts).toEqual(["accounts.google.com"]);
+    expect(buildUpstreamPath(start!)).toBe("/connections/gdrive/start");
+
+    const callback = matchEndpoint("GET", "/oauth/gdrive/callback");
+
+    expect(callback?.params).toEqual({ provider: "gdrive" });
+    expect(callback?.endpoint.kind).toBe("oauth-complete");
+    expect(buildUpstreamPath(callback!)).toBe("/connections/gdrive/complete");
+  });
+
   it("matches the connections list and rewrites the trailing slash", () => {
     const match = matchEndpoint("GET", "/connections");
 

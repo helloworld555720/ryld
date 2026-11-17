@@ -167,6 +167,29 @@ That client does **not** list our BFF callback. Asking it to authorize
 2026-11-14 14:05 UTC). Add that URI to the client's authorized redirect URIs; it is the
 only outstanding change for the flow to reach the consent screen.
 
+## Google Drive (`gdrive`, probed 2026-11-17)
+
+The provider **exists upstream** and, as of the second probe on 2026-11-17, its redirect
+allowlist **accepts our BFF callback**:
+
+| Request | Result |
+| --- | --- |
+| `POST /connections/gdrive/start` + `{"redirect_uri":"http://localhost:3000/api/backend/oauth/gdrive/callback"}` | `307` + `location: https://accounts.google.com/o/oauth2/v2/auth?…&redirect_uri=http://localhost:3000/api/backend/oauth/gdrive/callback&scope=https://www.googleapis.com/auth/drive.file&state=<32 hex>` |
+| same call with the `youtube` callback or any non-allowlisted URI | `400` `{"detail":"invalid redirect uri"}` — still exact per provider |
+| `POST /connections/gdrive/complete` with a fake code/state | `200` `{"connected":false}` (same uninformative failure surface as youtube) |
+| other provider names (`google-drive`, `google_drive`, `drive`, `googledrive`, `vimeo`, `dropbox`, `s3`) | `404` |
+
+An earlier probe the same day returned `400 "invalid redirect uri"` for every gdrive
+callback; the API allowlist was updated between the two. The **remaining** blocker is
+Google's OAuth client: driving the UI flow now reaches Google's consent screen and stops on
+`Error 400: redirect_uri_mismatch`, with the error page naming
+`http://localhost:3000/api/backend/oauth/gdrive/callback`. Google's client must list that
+URI. Until it does, the popup lands on Google's error page; the API-side hops are working.
+
+The UI entry lives in `lib/connections.ts` (`gdrive`, filed under `storage`) and the BFF
+paths are generated: `/api/backend/connections/gdrive/start` and
+`/api/backend/oauth/gdrive/callback`.
+
 ## Frontend contract (implemented 2026-11-14)
 
 Registry: `lib/api/endpoints.ts`. Handler: `app/api/backend/[...path]/route.ts`.
@@ -226,7 +249,9 @@ Observed validation:
 3. Does `complete` validate `iss`? And is the `state` bound to the user who started the
    flow? Neither is observable while all failures return `200 false`.
 4. Is a disconnect endpoint planned? `DELETE /connections/{provider}` is `404` today.
-5. Are there other providers besides YouTube? Only `youtube` resolves today; the UI reads
+5. Are there other providers besides YouTube? `youtube` and `gdrive` both resolve upstream;
+   gdrive accepts our BFF callback (`307` to Google) and is blocked only by Google's client
+   redirect allowlist (2026-11-17). Everything else probed is `404`. The UI reads
    `lib/connections.ts`, and each provider needs a BFF allowlist entry plus its
    `allowedRedirectHosts`.
 6. Does `complete` add an account or replace the existing one for the same provider? The UI

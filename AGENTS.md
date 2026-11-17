@@ -423,6 +423,19 @@ those files; re-run the CLI instead.
   follows a 307 transparently and would hand the caller a sign-in page as success;
   top-level OAuth navigations still redirect. Project creation is deliberately not listed
   in the UI yet — the page only creates.
+- **2026-11-17** — Added **Google Drive** (`gdrive`) under the **Storage** tab (owner request),
+  as the first provider that is not a social account. The registry entry alone is enough on
+  our side: `lib/api/endpoints.ts` generates `/connections/gdrive/start` and
+  `/oauth/gdrive/callback` per provider, with `accounts.google.com` as the only redirect host
+  and `https://accounts.google.com` as the fallback issuer. Verified live 2026-11-17: with
+  `redirect_uri=http://localhost:3000/api/backend/oauth/gdrive/callback` the API answers
+  `307` to `accounts.google.com` with scope `https://www.googleapis.com/auth/drive.file`, and
+  `complete` with a fake code answers `200 {"connected":false}`. A first probe the same day
+  had been rejected with `400 invalid redirect uri`, so the API allowlist was extended in
+  between. **Remaining blocker:** Google's OAuth client does not list our callback — the
+  consent screen stops on `Error 400: redirect_uri_mismatch`. Until it is registered the
+  popup lands on Google's error page; every hop on our side and on the API works. See
+  `docs/api-inventory.md`.
 
 ## 11. Deferred / follow-ups
 

@@ -28,6 +28,12 @@ describe("connectionNotice", () => {
     expect(connectionNotice({ error: "youtube_start_failed" })?.tone).toBe(
       "error",
     );
+    expect(connectionNotice({ error: "gdrive_failed" })?.message).toBe(
+      "We couldn't finish connecting Google Drive. Please try again.",
+    );
+    expect(connectionNotice({ error: "gdrive_start_failed" })?.tone).toBe(
+      "error",
+    );
   });
 
   it("never echoes an attacker-controlled value", () => {
