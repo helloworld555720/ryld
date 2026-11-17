@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { ZodType } from "zod";
 
 import { buildCallbackUrl } from "@/lib/api/callback-url";
 import {
@@ -40,6 +41,8 @@ const POPUP_RETURN_PATH = "/connections/complete";
 /** Query length caps: this endpoint is reachable by anyone, not just Google. */
 const MAX_CODE_LENGTH = 2_048;
 const MAX_STATE_LENGTH = 512;
+/** Inbound JSON cap. The only body today is a project draft. */
+const MAX_BODY_BYTES = 16 * 1024;
 
 function errorResponse(
   status: number,
@@ -148,6 +151,52 @@ async function callUpstream(
       error instanceof DOMException && error.name === "TimeoutError";
     return { ok: false, reason: timedOut ? "timeout" : "network" };
   }
+}
+
+type BodyRead =
+  | { ok: true; body: string }
+  | { ok: false; response: NextResponse };
+
+/**
+ * Reads a JSON body, enforces a small cap, and keeps only what the registry
+ * schema declares. Unknown keys are dropped rather than forwarded.
+ */
+async function readRequestBody(
+  request: NextRequest,
+  schema: ZodType,
+  requestId: string,
+): Promise<BodyRead> {
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    log("warn", "bff.body_too_large", { requestId, bytes: declared });
+    return { ok: false, response: errorResponse(413, "VALIDATION", requestId) };
+  }
+
+  const text = await request.text();
+  if (text.length > MAX_BODY_BYTES) {
+    log("warn", "bff.body_too_large", { requestId, bytes: text.length });
+    return { ok: false, response: errorResponse(413, "VALIDATION", requestId) };
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    log("warn", "bff.body_invalid_json", { requestId });
+    return { ok: false, response: errorResponse(400, "VALIDATION", requestId) };
+  }
+
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) {
+    // Never log the payload: it carries a user-supplied URL.
+    log("warn", "bff.body_rejected", {
+      requestId,
+      issues: parsed.error.issues.length,
+    });
+    return { ok: false, response: errorResponse(400, "VALIDATION", requestId) };
+  }
+
+  return { ok: true, body: JSON.stringify(parsed.data) };
 }
 
 function startFailed(
@@ -358,8 +407,21 @@ async function handleJson(
   requestId: string,
   startedAt: number,
 ): Promise<NextResponse> {
+  let body: string | undefined;
+
+  if (match.endpoint.request) {
+    const read = await readRequestBody(
+      request,
+      match.endpoint.request,
+      requestId,
+    );
+    if (!read.ok) return read.response;
+    body = read.body;
+  }
+
   const result = await callUpstream(buildUpstreamPath(match), token, {
     method: match.endpoint.upstreamMethod ?? match.endpoint.method,
+    body,
   });
 
   if (!result.ok) {
@@ -381,10 +443,12 @@ async function handleJson(
       requestId,
       route: match.endpoint.id,
     });
-    return signInRedirect(request);
+    // A fetch call cannot use a sign-in redirect: the browser would follow it
+    // and the caller would parse the sign-in page as a result.
+    return errorResponse(401, "UNAUTHORIZED", requestId);
   }
 
-  if (response.status !== 200) {
+  if (response.status < 200 || response.status >= 300) {
     log("error", "bff.unexpected_status", {
       requestId,
       route: match.endpoint.id,
@@ -418,12 +482,12 @@ async function handleJson(
   log("info", "bff.json", {
     requestId,
     route: match.endpoint.id,
-    status: 200,
+    status: response.status,
     durationMs: Date.now() - startedAt,
   });
 
   return NextResponse.json(parsed.data, {
-    status: 200,
+    status: response.status,
     headers: {
       "cache-control": "no-store",
       "x-request-id": requestId,
@@ -431,21 +495,30 @@ async function handleJson(
   });
 }
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> },
-) {
-  const startedAt = Date.now();
-  const requestId = newRequestId();
-  const { path } = await params;
-  const pathname = `/${path.join("/")}`;
+interface Preflight {
+  match: EndpointMatch;
+  provider?: ConnectionProvider;
+  token: string;
+}
 
-  // Match against the registry first: it is pure, and it tells us which auth
-  // failure mode applies before any network call happens.
+type PreflightResult =
+  | { ok: true; preflight: Preflight }
+  | { ok: false; response: NextResponse };
+
+/**
+ * Shared by every verb: match the registry, resolve the provider, authorize,
+ * and mint the upstream token. Deny-by-default happens before any network call.
+ */
+async function prepareRequest(
+  request: NextRequest,
+  pathname: string,
+  requestId: string,
+  startedAt: number,
+): Promise<PreflightResult> {
   const match = matchEndpoint(request.method, pathname);
   if (!match) {
     log("warn", "bff.rejected", { requestId, route: pathname, status: 404 });
-    return errorResponse(404, "NOT_FOUND", requestId);
+    return { ok: false, response: errorResponse(404, "NOT_FOUND", requestId) };
   }
 
   const providerId = match.params.provider;
@@ -458,13 +531,18 @@ export async function GET(
       requestId,
       route: match.endpoint.id,
     });
-    return errorResponse(500, "INTERNAL", requestId);
+    return { ok: false, response: errorResponse(500, "INTERNAL", requestId) };
   }
 
   /*
-   * Authorization is the boundary, not `proxy.ts`. The OAuth callback is a
-   * top-level navigation, so a missing session must come back as a redirect
-   * into the app instead of a sign-in bounce that would drop the code.
+   * Authorization is the boundary, not `proxy.ts`. Two failure shapes:
+   *
+   * - A top-level navigation (the Connect anchor and the provider callback)
+   *   must be redirected into the app, or a sign-in bounce would drop the
+   *   OAuth code.
+   * - A fetch to a JSON endpoint must answer 401, so the client can redirect
+   *   itself. A 307 here would be followed transparently by `fetch` and the
+   *   caller would parse a sign-in page as if it were success.
    */
   if (match.endpoint.kind === "oauth-complete") {
     const session = await getSession();
@@ -473,7 +551,22 @@ export async function GET(
         requestId,
         route: match.endpoint.id,
       });
-      return connectionsRedirect(request, { error: "session_expired" });
+      return {
+        ok: false,
+        response: connectionsRedirect(request, { error: "session_expired" }),
+      };
+    }
+  } else if (match.endpoint.kind === "json") {
+    const session = await getSession();
+    if (!session) {
+      log("warn", "bff.no_session", {
+        requestId,
+        route: match.endpoint.id,
+      });
+      return {
+        ok: false,
+        response: errorResponse(401, "UNAUTHORIZED", requestId),
+      };
     }
   } else {
     await requireSession(RETURN_PATH);
@@ -484,9 +577,15 @@ export async function GET(
     token = await getAccessToken();
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
-      return match.endpoint.kind === "oauth-complete"
-        ? connectionsRedirect(request, { error: "session_expired" })
-        : signInRedirect(request);
+      return {
+        ok: false,
+        response:
+          match.endpoint.kind === "oauth-complete"
+            ? connectionsRedirect(request, { error: "session_expired" })
+            : match.endpoint.kind === "json"
+              ? errorResponse(401, "UNAUTHORIZED", requestId)
+              : signInRedirect(request),
+      };
     }
 
     log("error", "bff.token_failed", {
@@ -495,10 +594,42 @@ export async function GET(
       durationMs: Date.now() - startedAt,
     });
 
-    return match.endpoint.kind === "oauth-complete"
-      ? connectionsRedirect(request, { error: "session_expired" })
-      : errorResponse(502, "UPSTREAM", requestId);
+    return {
+      ok: false,
+      response:
+        match.endpoint.kind === "oauth-complete"
+          ? connectionsRedirect(request, { error: "session_expired" })
+          : errorResponse(502, "UPSTREAM", requestId),
+    };
   }
+
+  return { ok: true, preflight: { match, provider, token } };
+}
+
+async function resolvePath(
+  params: Promise<{ path: string[] }>,
+): Promise<string> {
+  const { path } = await params;
+  return `/${path.join("/")}`;
+}
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
+  const startedAt = Date.now();
+  const requestId = newRequestId();
+  const pathname = await resolvePath(params);
+
+  const preflight = await prepareRequest(
+    request,
+    pathname,
+    requestId,
+    startedAt,
+  );
+  if (!preflight.ok) return preflight.response;
+
+  const { match, provider, token } = preflight.preflight;
 
   switch (match.endpoint.kind) {
     case "oauth-start": {
@@ -528,4 +659,40 @@ export async function GET(
     case "json":
       return handleJson(request, match, token, requestId, startedAt);
   }
+}
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
+  const startedAt = Date.now();
+  const requestId = newRequestId();
+  const pathname = await resolvePath(params);
+
+  const preflight = await prepareRequest(
+    request,
+    pathname,
+    requestId,
+    startedAt,
+  );
+  if (!preflight.ok) return preflight.response;
+
+  const { match, token } = preflight.preflight;
+
+  /*
+   * `matchEndpoint` already filtered by verb, so anything that reaches here is
+   * registered as POST. Only the JSON relay knows what to do with a body; a
+   * future POST entry of another kind is a registry mistake, not a request we
+   * can serve.
+   */
+  if (match.endpoint.kind !== "json") {
+    log("error", "bff.registry_mismatch", {
+      requestId,
+      route: match.endpoint.id,
+      method: request.method,
+    });
+    return errorResponse(500, "INTERNAL", requestId);
+  }
+
+  return handleJson(request, match, token, requestId, startedAt);
 }

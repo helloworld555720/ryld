@@ -196,6 +196,28 @@ Grouping is by `type` only: repeated items with the same `type` are treated as *
 accounts of one provider**, never as an upsert. Whether `complete` appends a second account
 or replaces the first is still unverified — the UI renders whatever the list contains.
 
+## Projects (upstream `jobs`, verified 2026-11-17)
+
+The UI calls these **projects**; the API calls the same resource **jobs**. The BFF
+rewrites `POST /api/backend/projects` → `POST /jobs/`. The trailing slash matters:
+`/jobs` answers `307` to `/jobs/`, which a server-side `fetch` would have to follow.
+
+| Upstream call | Behaviour |
+| --- | --- |
+| `POST /jobs/` | `201` with the created object: `{"input":{"url":"…","type":"youtube"},"output":{"type":"s3"},"id":"<uuid>","status":"draft","source":null}`. Missing or invalid body → `422 {"detail":"Invalid request"}` (a fixed message with no field detail) |
+| `GET /jobs/` | `200` with an array of the same shape |
+| `DELETE /jobs/{id}` | `200 {"message":"Job deleted successfully"}` (verified; not exposed by this app) |
+
+Observed validation:
+
+- `type` is required on both sides; omitting it is `422`.
+- Unknown keys are accepted and dropped (`output: {"type":"s3","bucket":"x"}` returns only
+  `type`).
+- The URL is not checked against the provider: `{"type":"youtube","url":"https://example.com/v"}`
+  is accepted and created. The form validates `youtube.com`/`youtu.be` itself; that is a
+  UX guard, not an upstream requirement.
+- Creation leaves `status: "draft"`. No transition into processing has been observed.
+
 ## Open questions
 
 1. What does `complete` return on **success**? Presumably `{"connected":true}`, plus

@@ -33,6 +33,21 @@ describe("matchEndpoint", () => {
     expect(buildUpstreamPath(match!)).toBe("/connections/");
   });
 
+  it("matches project creation and maps it onto the upstream jobs resource", () => {
+    const match = matchEndpoint("POST", "/projects");
+
+    expect(match?.endpoint.kind).toBe("json");
+    expect(match?.endpoint.request).toBeDefined();
+    expect(match?.endpoint.response).toBeDefined();
+    expect(buildUpstreamPath(match!)).toBe("/jobs/");
+  });
+
+  it("keeps the project path exactly POST", () => {
+    expect(matchEndpoint("GET", "/projects")).toBeNull();
+    expect(matchEndpoint("DELETE", "/projects")).toBeNull();
+    expect(matchEndpoint("POST", "/projects/1")).toBeNull();
+  });
+
   it("rejects a method the endpoint did not register", () => {
     expect(matchEndpoint("POST", "/connections/youtube/start")).toBeNull();
     expect(matchEndpoint("POST", "/oauth/youtube/callback")).toBeNull();

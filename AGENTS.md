@@ -78,6 +78,11 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
 - The JWT is minted **per request, server-side**: read the session cookie →
   `GET {AUTH_SERVICE_URL}/api/auth/token` → `{ token }` → attach as Bearer.
   (Verified: the endpoint is GET-only; a POST returns a bare 404.)
+- **Projects** are created with `POST /api/backend/projects`. The body is parsed
+  against the input/output registries (`lib/projects.ts`) and only the declared
+  fields are forwarded to the API's `POST /jobs/`. The API calls the resource a *job*;
+  this app never does — the browser path and every identifier here say project, and
+  the rename lives in `lib/api/endpoints.ts`.
 - No refresh tokens, no token storage, no client secret.
 
 ## 4. Repo layout
@@ -87,6 +92,7 @@ app/
   auth/[path]/             better-auth-ui screens (sign-in, sign-up, forgot/reset, verify)
   (app)/                   authenticated area: layout guard + shell
     api-token/             developer token page (explicit JWT exception, see §5.2)
+    projects/              project creation: pick a source + destination
   connections/complete/    popup completion page: messages the opener, closes
   api/auth/[...all]/       auth proxy route handler
   api/backend/[...path]/   BFF proxy, allowlist-only
@@ -106,6 +112,7 @@ lib/
   api/callback-url.ts      the redirect_uri both hops must agree on
   api/connections.ts       RSC read of the caller's connections
   api/schemas/             zod schemas for upstream payloads
+  projects.ts              input/output registries + draft builder (client-safe)
   connections.ts           provider + category registry, grouping helpers
   env.ts                   zod-validated env, server/public split
   errors.ts                ApiError, error mapping, safe messages
@@ -114,7 +121,7 @@ lib/
   jwt.ts                   unverified `exp` read for the token page (never logs)
   connection-notice.ts     callback status → fixed user copy (never echoes input)
   oauth-popup.ts           popup cookie/message constants shared with the BFF
-  nav.ts                   nav registry (Home, Connections, API token)
+  nav.ts                   nav registry (Home, Projects, Connections, API token)
   ui-prefs.ts              cookie-backed UI preferences (sidebar rail)
   query-client.ts          one QueryClient per request / browser singleton
 docs/
@@ -397,6 +404,25 @@ those files; re-run the CLI instead.
   with `window.opener` intact (no COOP on either side); a fake `code` produced the parent
   toast and left the list unchanged. Note for future testing: the browser-automation
   `navigate` call severs `window.opener`, so popups must be driven from inside.
+- **2026-11-17** — Added **Projects** to the sidebar between Home and Connections
+  (owner request). A project is a source plus a destination; the page has one card that
+  submits `POST /api/backend/projects`, which rewrites to the API's `POST /jobs/` (trailing
+  slash required; `/jobs` answers `307`). The API calls the resource a job, but nothing in
+  this app does: routes, components, schemas, copy and the endpoint id all say project.
+  Sources and destinations are registries (`lib/projects.ts`): each entry declares its
+  `fields` and each field carries its own zod schema, so adding a source or destination
+  grows the form without touching the form component. Today that is YouTube (one validated
+  `url`) and S3 (no extra fields). `buildProjectDraft()` only copies fields the registry
+  declares, and the BFF parses the body with the same schema before forwarding, so unknown
+  keys never reach the API. Verified live 2026-11-17: `POST /jobs/` answers `201` with
+  `{ input, output, id, status: "draft", source }`; malformed bodies are `422`; unknown
+  output keys are dropped and an arbitrary host is accepted for `type: "youtube"`, so the
+  form's YouTube host check is our own UX guard. The `json` BFF kind now forwards a
+  validated request body and accepts any 2xx (the create answers `201`). JSON endpoints
+  also answer **401 rather than redirecting** when the session is gone, because `fetch`
+  follows a 307 transparently and would hand the caller a sign-in page as success;
+  top-level OAuth navigations still redirect. Project creation is deliberately not listed
+  in the UI yet — the page only creates.
 
 ## 11. Deferred / follow-ups
 

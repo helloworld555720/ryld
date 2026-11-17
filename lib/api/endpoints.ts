@@ -3,6 +3,10 @@ import "server-only";
 import type { ZodType } from "zod";
 
 import { connectionsListSchema } from "@/lib/api/schemas/connections";
+import {
+  projectCreateSchema,
+  projectSchema,
+} from "@/lib/api/schemas/projects";
 import { CONNECTION_PROVIDERS } from "@/lib/connections";
 
 /**
@@ -58,6 +62,12 @@ export interface EndpointEntry {
   redirectHosts?: readonly string[];
   /** Required for `json`: the upstream payload must parse against this. */
   response?: ZodType;
+  /**
+   * Required for a `json` endpoint that accepts a request body. The body is
+   * parsed against this and only its output is forwarded, so the BFF never
+   * relays free-form input.
+   */
+  request?: ZodType;
 }
 
 /** Bootstrap segments only: no percent-encoding, no dots, no slashes. */
@@ -108,6 +118,20 @@ export const BFF_ENDPOINTS: readonly EndpointEntry[] = [
     // The upstream route only resolves with the trailing slash.
     upstreamPath: "/connections/",
     response: connectionsListSchema,
+  },
+  {
+    /*
+     * Projects are called `jobs` upstream. The browser path stays `/projects`
+     * so this app only ever names its own concept; the rewrite happens here.
+     */
+    id: "projects.create",
+    kind: "json",
+    method: "POST",
+    pattern: "/projects",
+    // Verified 2026-11-17: `/jobs` answers 307, `/jobs/` accepts the body.
+    upstreamPath: "/jobs/",
+    request: projectCreateSchema,
+    response: projectSchema,
   },
   ...connectionEntries,
 ];

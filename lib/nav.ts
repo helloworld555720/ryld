@@ -1,4 +1,10 @@
-import { Cable, Home, KeyRound, type LucideIcon } from "lucide-react";
+import {
+  Cable,
+  FolderKanban,
+  Home,
+  KeyRound,
+  type LucideIcon,
+} from "lucide-react";
 
 /**
  * The whole navigation surface. Adding a destination here is all the sidebar
@@ -12,6 +18,7 @@ export interface NavItem {
 
 export const NAV_ITEMS: readonly NavItem[] = [
   { href: "/home", label: "Home", icon: Home },
+  { href: "/projects", label: "Projects", icon: FolderKanban },
   { href: "/connections", label: "Connections", icon: Cable },
   { href: "/api-token", label: "API token", icon: KeyRound },
 ];
