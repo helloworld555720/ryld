@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
-import { CircleCheck, Loader2, Plus, TriangleAlert } from "lucide-react";
+import { Loader2, Plus, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
@@ -13,13 +13,6 @@ import {
   AlertTitle,
 } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   Field,
   FieldDescription,
@@ -255,14 +248,22 @@ function withoutSide(
 export interface CreateProjectFormProps {
   /** Connected Drive accounts, read on the server for the Picker. */
   gdriveAccounts: readonly GdriveAccount[];
+  /** Called after the API confirms creation; the dialog closes on it. */
+  onCreated?: (id: string | null) => void;
 }
 
 /**
  * Creates one project: a source, its fields, and a destination. Validation
  * uses the same schema the BFF applies, so a payload the browser accepts is
  * one the server will forward (and vice versa).
+ *
+ * The form owns no chrome — no card, no title — so the caller decides whether
+ * it is a dialog or an inline block.
  */
-export function CreateProjectForm({ gdriveAccounts }: CreateProjectFormProps) {
+export function CreateProjectForm({
+  gdriveAccounts,
+  onCreated,
+}: CreateProjectFormProps) {
   const router = useRouter();
 
   const [inputType, setInputType] = useState(DEFAULT_INPUT.id);
@@ -276,7 +277,6 @@ export function CreateProjectForm({ gdriveAccounts }: CreateProjectFormProps) {
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
-  const [createdId, setCreatedId] = useState<string | null>(null);
 
   const activeInputKind = getProjectInputKind(inputType) ?? DEFAULT_INPUT;
   const activeOutputKind = getProjectOutputKind(outputType) ?? DEFAULT_OUTPUT;
@@ -313,12 +313,12 @@ export function CreateProjectForm({ gdriveAccounts }: CreateProjectFormProps) {
       return typeof id === "string" ? id : null;
     },
     onSuccess: (id) => {
-      setCreatedId(id);
       setFormError(null);
       setErrors({});
       setLabels({});
       setInputValues(initialFieldValues(activeInputKind, gdriveAccounts));
       setOutputValues(initialFieldValues(activeOutputKind));
+      onCreated?.(id);
     },
     onError: (error) => {
       if (isApiError(error) && error.status === 401) {
@@ -345,7 +345,6 @@ export function CreateProjectForm({ gdriveAccounts }: CreateProjectFormProps) {
 
     setLabels((previous) => withoutSide(previous, side));
     setErrors({});
-    setCreatedId(null);
     setFormError(null);
   }
 
@@ -400,7 +399,6 @@ export function CreateProjectForm({ gdriveAccounts }: CreateProjectFormProps) {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError(null);
-    setCreatedId(null);
 
     const draft = buildProjectDraft({
       inputType,
@@ -433,92 +431,70 @@ export function CreateProjectForm({ gdriveAccounts }: CreateProjectFormProps) {
   const pending = create.isPending;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>New project</CardTitle>
-        <CardDescription>
-          Choose a source and a destination. Ryld handles the rest in the
-          background.
-        </CardDescription>
-      </CardHeader>
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <KindSelect
+          id="project-input-type"
+          label="Source"
+          kinds={PROJECT_INPUT_KINDS}
+          active={activeInputKind}
+          value={activeInputKind.id}
+          disabled={pending}
+          onChange={(id) => changeType("input", id)}
+        />
+        <KindSelect
+          id="project-output-type"
+          label="Destination"
+          kinds={PROJECT_OUTPUT_KINDS}
+          active={activeOutputKind}
+          value={activeOutputKind.id}
+          disabled={pending}
+          onChange={(id) => changeType("output", id)}
+        />
+      </div>
 
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <KindSelect
-              id="project-input-type"
-              label="Source"
-              kinds={PROJECT_INPUT_KINDS}
-              active={activeInputKind}
-              value={activeInputKind.id}
-              disabled={pending}
-              onChange={(id) => changeType("input", id)}
-            />
-            <KindSelect
-              id="project-output-type"
-              label="Destination"
-              kinds={PROJECT_OUTPUT_KINDS}
-              active={activeOutputKind}
-              value={activeOutputKind.id}
-              disabled={pending}
-              onChange={(id) => changeType("output", id)}
-            />
-          </div>
+      <KindFields
+        kind={activeInputKind}
+        side="input"
+        values={inputValues}
+        labels={labels}
+        errors={errors}
+        gdriveAccounts={gdriveAccounts}
+        disabled={pending}
+        onChange={changeValue}
+        onLabelChange={changeLabel}
+      />
 
-          <KindFields
-            kind={activeInputKind}
-            side="input"
-            values={inputValues}
-            labels={labels}
-            errors={errors}
-            gdriveAccounts={gdriveAccounts}
-            disabled={pending}
-            onChange={changeValue}
-            onLabelChange={changeLabel}
-          />
+      <KindFields
+        kind={activeOutputKind}
+        side="output"
+        values={outputValues}
+        labels={labels}
+        errors={errors}
+        gdriveAccounts={gdriveAccounts}
+        disabled={pending}
+        onChange={changeValue}
+        onLabelChange={changeLabel}
+      />
 
-          <KindFields
-            kind={activeOutputKind}
-            side="output"
-            values={outputValues}
-            labels={labels}
-            errors={errors}
-            gdriveAccounts={gdriveAccounts}
-            disabled={pending}
-            onChange={changeValue}
-            onLabelChange={changeLabel}
-          />
+      {formError ? (
+        <Alert variant="destructive">
+          <TriangleAlert aria-hidden="true" />
+          <AlertTitle>Project not created</AlertTitle>
+          <AlertDescription>{formError}</AlertDescription>
+        </Alert>
+      ) : null}
 
-          {formError ? (
-            <Alert variant="destructive">
-              <TriangleAlert aria-hidden="true" />
-              <AlertTitle>Project not created</AlertTitle>
-              <AlertDescription>{formError}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {createdId ? (
-            <Alert>
-              <CircleCheck aria-hidden="true" />
-              <AlertTitle>Project created</AlertTitle>
-              <AlertDescription>
-                Reference{" "}
-                <code className="font-mono">{createdId.slice(0, 8)}</code>. You
-                can create another one below.
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          <Button type="submit" disabled={pending}>
-            {pending ? (
-              <Loader2 className="animate-spin" aria-hidden="true" />
-            ) : (
-              <Plus aria-hidden="true" />
-            )}
-            {pending ? "Creating…" : "Create project"}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+      <div className="flex justify-end">
+        <Button type="submit" disabled={pending}>
+          {pending ? (
+            <Loader2 className="animate-spin" aria-hidden="true" />
+          ) : (
+            <Plus aria-hidden="true" />
+          )}
+          {pending ? "Creating…" : "Create project"}
+        </Button>
+      </div>
+    </form>
   );
 }

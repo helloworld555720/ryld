@@ -113,7 +113,8 @@ proxy.ts                   Next 16's renamed middleware: optimistic cookie check
 components/
   ui/                      shadcn primitives (generated, don't hand-edit upstream files)
   app/                     shell, nav, page-header, empty/error states,
-                           create-project-form, google-drive-file-picker
+                           create-project-dialog, create-project-form,
+                           google-drive-file-picker
   auth/                    better-auth-ui components (generated)
   providers.tsx            QueryClient + AuthProvider (client boundary)
 lib/
@@ -479,6 +480,23 @@ those files; re-run the CLI instead.
   drops the error when the source changes. Not verifiable in automation: picking a file
   needs a browser signed into the connected Google account, so the Picker iframe renders
   Google's sign-in page instead. See `docs/api-inventory.md`.
+- **2026-11-20** — Creating a project moved from an inline card to a **dialog** (owner
+  request). `/projects` now shows the page header with one `+ Create project` button in its
+  actions slot; the button is the `DialogTrigger`, so the form is no longer permanent page
+  furniture and the page has room for the project list that comes next. `CreateProjectForm`
+  owns no chrome (no card, no title): it renders fields, the inline error alert and a
+  right-aligned submit, and reports success through `onCreated(id)`, which closes the dialog
+  and toasts `Project created` with the reference. `DialogTitle`/`DialogDescription` carry
+  the copy that used to be the card header, so the dialog is labelled for assistive tech.
+  The content is `max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl`: the Drive variant
+  is taller than a short viewport, and clipping the submit button would be worse than
+  scrolling. Radix unmounts the content on close, so a reopened dialog always starts from a
+  clean draft. `components/ui/dialog.tsx` is the registry-generated shadcn component
+  (`bunx shadcn@latest add dialog`, style `radix-nova`) — no dependency was added, `radix-ui`
+  already provides it. Verified in the browser 2026-11-20: the trigger opens a centred,
+  focus-trapping dialog; Drive validation shows "Choose a file." without closing; Escape and
+  the X close it and return focus to the trigger; reopening resets Source to YouTube; and a
+  real creation closed the dialog and toasted the reference.
 
 ## 11. Deferred / follow-ups
 

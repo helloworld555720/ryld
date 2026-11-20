@@ -1,4 +1,4 @@
-import { CreateProjectForm } from "@/components/app/create-project-form";
+import { CreateProjectDialog } from "@/components/app/create-project-dialog";
 import { PageHeader } from "@/components/app/page-header";
 import { listConnections } from "@/lib/api/connections";
 import { isApiError } from "@/lib/errors";
@@ -36,11 +36,8 @@ export default async function ProjectsPage() {
         eyebrow="Workspace"
         title="Projects"
         description="Turn a source into a destination. Everything else runs in the background."
+        actions={<CreateProjectDialog gdriveAccounts={gdriveAccounts} />}
       />
-
-      <div className="max-w-2xl">
-        <CreateProjectForm gdriveAccounts={gdriveAccounts} />
-      </div>
     </div>
   );
 }
