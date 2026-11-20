@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   projectCreateSchema,
   projectSchema,
+  projectsListSchema,
 } from "@/lib/api/schemas/projects";
 import {
   PROJECT_INPUT_KINDS,
@@ -10,6 +11,8 @@ import {
   buildProjectDraft,
   initialFieldValues,
   isYouTubeHost,
+  projectStatusLabel,
+  summarizeProjectInput,
 } from "@/lib/projects";
 
 const example = {
@@ -129,6 +132,35 @@ describe("projectSchema", () => {
   });
 });
 
+describe("projectsListSchema", () => {
+  const stored = {
+    ...gdriveExample,
+    id: "10624453-8527-4134-acdb-f4ceda0d94d1",
+    status: "draft",
+    source: null,
+  };
+
+  it("accepts the array the API returns, and an empty one", () => {
+    expect(projectsListSchema.parse([stored])).toEqual([stored]);
+    expect(projectsListSchema.parse([])).toEqual([]);
+  });
+
+  it("rejects a single project where an array is expected", () => {
+    expect(projectsListSchema.safeParse(stored).success).toBe(false);
+  });
+
+  it("rejects an item with no id, so a card cannot key on undefined", () => {
+    const withoutId = {
+      input: stored.input,
+      output: stored.output,
+      status: stored.status,
+      source: stored.source,
+    };
+
+    expect(projectsListSchema.safeParse([withoutId]).success).toBe(false);
+  });
+});
+
 describe("buildProjectDraft", () => {
   it("sends only the fields the registry declares", () => {
     const draft = buildProjectDraft({
@@ -245,6 +277,66 @@ describe("registries", () => {
         );
       }
     }
+  });
+
+  it("gives every kind an icon for its card", () => {
+    for (const kind of kinds) {
+      expect(kind.icon, kind.id).toBeTruthy();
+    }
+  });
+});
+
+describe("summarizeProjectInput", () => {
+  it("returns the registry's fields in registry order", () => {
+    expect(
+      summarizeProjectInput("gdrive", gdriveExample.input),
+    ).toEqual([
+      { label: "Google Drive account", value: gdriveExample.input.conn_id },
+      { label: "File", value: gdriveExample.input.file_id },
+    ]);
+  });
+
+  it("reads a YouTube link from the stored input", () => {
+    expect(summarizeProjectInput("youtube", example.input)).toEqual([
+      { label: "Video URL", value: "https://youtu.be/sKJvJCsey84" },
+    ]);
+  });
+
+  it("drops fields the registry does not declare", () => {
+    expect(
+      summarizeProjectInput("youtube", {
+        url: "https://youtu.be/abc",
+        secret: "never rendered",
+      }),
+    ).toEqual([{ label: "Video URL", value: "https://youtu.be/abc" }]);
+  });
+
+  it("drops empty and non-string values instead of rendering them", () => {
+    expect(
+      summarizeProjectInput("gdrive", {
+        conn_id: "  ",
+        file_id: { nested: true },
+      }),
+    ).toEqual([]);
+  });
+
+  it("returns nothing for a type the registry does not know", () => {
+    expect(summarizeProjectInput("vimeo", { url: "https://vimeo.com/1" })).toEqual(
+      [],
+    );
+  });
+});
+
+describe("projectStatusLabel", () => {
+  it("gives known statuses copy", () => {
+    expect(projectStatusLabel("draft")).toBe("Draft");
+    expect(projectStatusLabel("Processing")).toBe("Processing");
+    expect(projectStatusLabel("COMPLETED")).toBe("Completed");
+    expect(projectStatusLabel("failed")).toBe("Failed");
+  });
+
+  it("shows an unknown status as the API sent it", () => {
+    expect(projectStatusLabel("awaiting_review")).toBe("awaiting_review");
   });
 });
 

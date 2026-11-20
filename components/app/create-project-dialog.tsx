@@ -1,6 +1,7 @@
 "use client";
 
 import { Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -29,6 +30,7 @@ export interface CreateProjectDialogProps {
 export function CreateProjectDialog({
   gdriveAccounts,
 }: CreateProjectDialogProps) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
 
   return (
@@ -59,6 +61,9 @@ export function CreateProjectDialog({
           gdriveAccounts={gdriveAccounts}
           onCreated={(id) => {
             setOpen(false);
+            // The card list is server-rendered: refresh so the new project
+            // appears without a manual reload.
+            router.refresh();
             toast.success(
               "Project created",
               id ? { description: `Reference ${id.slice(0, 8)}.` } : undefined,

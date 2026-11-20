@@ -233,6 +233,11 @@ rewrites `POST /api/backend/projects` → `POST /jobs/`. The trailing slash matt
 | `GET /jobs/` | `200` with an array of the same shape |
 | `DELETE /jobs/{id}` | `200 {"message":"Job deleted successfully"}` (verified; not exposed by this app) |
 
+`GET /jobs/` is what `/projects` renders: one card per item, read server-side. The payload
+carries **no timestamp and no name**, so cards are ordered exactly as the API returns them
+(insertion order, oldest first) and are identified by a short `id` prefix. `status` is an
+open string; only `draft` has been observed on any of these responses.
+
 Observed validation:
 
 - `type` is required on both sides; omitting it is `422`.

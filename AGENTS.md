@@ -83,6 +83,14 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
   fields are forwarded to the API's `POST /jobs/`. The API calls the resource a *job*;
   this app never does — the browser path and every identifier here say project, and
   the rename lives in `lib/api/endpoints.ts`.
+- **The projects page lists them as cards.** `GET /jobs/` is read server-side
+  (`lib/api/projects.ts`, no hop through our own BFF) and rendered by
+  `components/app/project-card.tsx`. The card is registry-driven like the form: the title,
+  icon and detail rows come from the `type` on each side (`summarizeProjectInput`), so a new
+  source or destination appears without touching the card. A failed list renders "we
+  couldn't load your projects", never the empty state — "no projects" would be a lie when we
+  could not ask. Creating through the dialog calls `router.refresh()` so the new card shows
+  without a reload.
 - **A Google Drive source is a file you already own.** The registry declares a
   `gdrive-account` field (`conn_id`, defaulting to the first connected Drive account) and a
   `gdrive-file` field (`file_id`), so the payload is `{type, conn_id, file_id}`. The file is
@@ -104,7 +112,7 @@ app/
   auth/[path]/             better-auth-ui screens (sign-in, sign-up, forgot/reset, verify)
   (app)/                   authenticated area: layout guard + shell
     api-token/             developer token page (explicit JWT exception, see §5.2)
-    projects/              project creation: pick a source + destination
+    projects/              project list (cards) + creation dialog
   connections/complete/    popup completion page: messages the opener, closes
   api/auth/[...all]/       auth proxy route handler
   api/backend/[...path]/   BFF proxy, allowlist-only
@@ -114,7 +122,7 @@ components/
   ui/                      shadcn primitives (generated, don't hand-edit upstream files)
   app/                     shell, nav, page-header, empty/error states,
                            create-project-dialog, create-project-form,
-                           google-drive-file-picker
+                           project-card, google-drive-file-picker
   auth/                    better-auth-ui components (generated)
   providers.tsx            QueryClient + AuthProvider (client boundary)
 lib/
@@ -125,6 +133,7 @@ lib/
   api/redirect.ts          host allowlist for upstream 3xx (OAuth start)
   api/callback-url.ts      the redirect_uri both hops must agree on
   api/connections.ts       RSC read of the caller's connections
+  api/projects.ts          RSC read of the caller's projects (upstream `/jobs/`)
   api/schemas/             zod schemas for upstream payloads
   projects.ts              input/output registries, field controls, draft builder
                            (client-safe)
@@ -497,6 +506,23 @@ those files; re-run the CLI instead.
   focus-trapping dialog; Drive validation shows "Choose a file." without closing; Escape and
   the X close it and return focus to the trigger; reopening resets Source to YouTube; and a
   real creation closed the dialog and toasted the reference.
+- **2026-11-20** — `/projects` now **lists projects as cards**, which supersedes the
+  "creation is deliberately not listed yet" note from 2026-11-17. The read is server-side
+  (`lib/api/projects.ts` → `GET /jobs/`, validated by the new `projectsListSchema`) exactly
+  like the connections list, so no HTTP hop goes back through our own BFF and the JWT never
+  leaves the server. `project-card.tsx` derives everything from the registries: the source
+  kind supplies the icon and title, the destination kind the "→ S3 storage" line, and
+  `summarizeProjectInput()` renders the stored fields the kind declares (drops unknown keys,
+  empty strings and non-strings), so a new provider needs no card change. Status is an open
+  string upstream — `projectStatusLabel()` gives the five we know copy, shows anything else
+  verbatim, and only `draft` has been observed. Two judgement calls worth keeping: a failed
+  list renders an error line rather than the empty state (never claim "no projects" when the
+  read failed), and the grid is `md:grid-cols-2` — two columns keep a full video URL on one
+  line, whereas three clipped it at ~290px. Cards stay in upstream order because the payload
+  carries no timestamp to sort by. Creating in the dialog calls `router.refresh()` so the new
+  card appears immediately. Verified live 2026-11-20: empty state, then a real creation
+  produced a card with `Draft`, the URL row and the reference, and the test project was
+  deleted afterwards by its exact id.
 
 ## 11. Deferred / follow-ups
 

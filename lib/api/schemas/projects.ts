@@ -52,3 +52,6 @@ export const projectSchema = z
   .catchall(z.unknown());
 
 export type Project = z.infer<typeof projectSchema>;
+
+/** `GET /jobs/` answers with an array of the same shape (verified 2026-11-17). */
+export const projectsListSchema = z.array(projectSchema);

@@ -1,3 +1,4 @@
+import { Cloud, HardDrive, SquarePlay, type LucideIcon } from "lucide-react";
 import { z } from "zod";
 
 /**
@@ -40,6 +41,8 @@ export interface ProjectKind {
   id: string;
   label: string;
   description: string;
+  /** Shown beside the label in the form and on a project card. */
+  icon: LucideIcon;
   fields: readonly ProjectField[];
 }
 
@@ -80,6 +83,7 @@ export const PROJECT_INPUT_KINDS: readonly ProjectKind[] = [
     id: "youtube",
     label: "YouTube",
     description: "Fetch a video from a public or unlisted link.",
+    icon: SquarePlay,
     fields: [
       {
         name: "url",
@@ -102,6 +106,7 @@ export const PROJECT_INPUT_KINDS: readonly ProjectKind[] = [
     id: "gdrive",
     label: "Google Drive",
     description: "Use a file from a connected Drive account.",
+    icon: Cloud,
     fields: [
       {
         name: "conn_id",
@@ -127,6 +132,7 @@ export const PROJECT_OUTPUT_KINDS: readonly ProjectKind[] = [
     id: "s3",
     label: "S3 storage",
     description: "Save the finished result to S3.",
+    icon: HardDrive,
     fields: [],
   },
 ];
@@ -206,4 +212,51 @@ export function buildProjectDraft(values: ProjectDraftValues): unknown {
       ),
     },
   };
+}
+
+/** One label/value pair rendered on a project card. */
+export interface ProjectFieldSummary {
+  label: string;
+  value: string;
+}
+
+/**
+ * The stored input fields worth showing, in registry order.
+ *
+ * Only fields the registry declares are read, and only when the stored value is
+ * a non-empty string — the shape comes from the API, so anything unexpected is
+ * dropped instead of being rendered as `[object Object]`.
+ */
+export function summarizeProjectInput(
+  type: string,
+  input: Readonly<Record<string, unknown>>,
+): ProjectFieldSummary[] {
+  const kind = getProjectInputKind(type);
+  if (!kind) return [];
+
+  const rows: ProjectFieldSummary[] = [];
+  for (const field of kind.fields) {
+    const value = input[field.name];
+    if (typeof value === "string" && value.trim() !== "") {
+      rows.push({ label: field.label, value });
+    }
+  }
+
+  return rows;
+}
+
+/**
+ * Upstream `status` is an open string (only `draft` has been observed), so
+ * known values get copy and anything else is shown as the API sent it.
+ */
+const STATUS_LABELS: Record<string, string> = {
+  draft: "Draft",
+  queued: "Queued",
+  processing: "Processing",
+  completed: "Completed",
+  failed: "Failed",
+};
+
+export function projectStatusLabel(status: string): string {
+  return STATUS_LABELS[status.toLowerCase()] ?? status;
 }
