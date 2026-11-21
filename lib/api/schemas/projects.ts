@@ -42,6 +42,20 @@ export const projectCreateSchema = z.object({
   submit: z.boolean().optional().default(false),
 });
 
+/**
+ * `source` is `null` until a project has been processed; afterwards it is an
+ * object with its own `type` discriminator (`hls` so far) and the artefacts that
+ * were produced.
+ *
+ * Deliberately loose past `type`: the result kinds are the API's vocabulary, not
+ * ours, and an unrecognised one must not fail the whole list — the card shows
+ * nothing for a kind it cannot explain. The `type` is required, because an
+ * object without one would be rendered from no registry at all.
+ */
+export const projectSourceSchema = z
+  .object({ type: z.string().min(1) })
+  .catchall(z.unknown());
+
 /** `POST /jobs/` answers with the created project; verified 2026-11-17. */
 export const projectSchema = z
   .object({
@@ -53,7 +67,7 @@ export const projectSchema = z
       .object({ type: z.string().min(1) })
       .catchall(z.unknown()),
     status: z.string().min(1),
-    source: z.unknown().nullable().optional(),
+    source: projectSourceSchema.nullable().optional(),
     /** Echoed by the API since 2026-11-21; older stored jobs may omit it. */
     submit: z.boolean().optional(),
   })

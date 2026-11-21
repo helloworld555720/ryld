@@ -236,7 +236,8 @@ rewrites `POST /api/backend/projects` → `POST /jobs/`. The trailing slash matt
 `GET /jobs/` is what `/projects` renders: one card per item, read server-side. The payload
 carries **no timestamp and no name**, so cards are ordered exactly as the API returns them
 (insertion order, oldest first) and are identified by a short `id` prefix. `status` is an
-open string; only `draft` has been observed on any of these responses.
+open string; `draft`, `pending`, `completed` and `failed` have all been observed, and
+`source` is `null` until a project finishes processing (see below).
 
 Observed validation:
 
@@ -265,6 +266,35 @@ Observed validation:
 state"}` — submission is **irreversible through the API**, which is why the create dialog
 puts `Save as draft` before `Submit` and treats Enter as a draft. Both actions post the same
 payload; they differ only in `submit`.
+
+### The populated `source` (verified 2026-11-21)
+
+`source` is `null` on creation and while a project is a draft or still running. A submitted
+`youtube → s3` project moved `pending` → `completed`, and `GET /jobs/` then returned:
+
+```json
+"source": {
+  "title": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
+  "playlist": "79b7ea43c1fd45629757a55397e83a3b/master.m3u8",
+  "poster": "79b7ea43c1fd45629757a55397e83a3b/thumbnail.jpg",
+  "thumbnails": "79b7ea43c1fd45629757a55397e83a3b/storyboard.vtt",
+  "captions": "79b7ea43c1fd45629757a55397e83a3b/captions.vtt",
+  "chapters": "79b7ea43c1fd45629757a55397e83a3b/chapters.vtt",
+  "type": "hls"
+}
+```
+
+- `type` is the result discriminator; `hls` is the only value observed.
+- The values are **storage keys relative to the output**, not URLs: no scheme, host or bucket,
+  and `output` carries no bucket either. This app shows them verbatim and never builds links
+  from them.
+- A project that fails while processing reports `status: "failed"` and `source: null`.
+- Submission stays irreversible after processing: `DELETE` on a `completed` or `failed`
+  project answers the same `409 {"detail":"Job is not in 'draft' state"}` as `pending`. Only a
+  `draft` can be removed through the API.
+- The result kind is the API's vocabulary, not ours: a new `source.type` must not break the
+  list, so the response schema validates only that `source` is an object with a non-empty
+  `type` and the card renders rows from a `PROJECT_SOURCE_KINDS` registry entry it knows.
 
 ### Google Drive sources (verified 2026-11-17)
 

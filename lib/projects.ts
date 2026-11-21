@@ -459,12 +459,52 @@ export const PROJECT_OUTPUT_KINDS: readonly ProjectKind[] = [
   },
 ];
 
+/**
+ * What the API records in a project's `source` once it has been processed.
+ *
+ * `source` is `null` while a project is a draft or still running; when it is
+ * filled it carries its own `type` discriminator (`hls` so far) plus the
+ * artefacts that were produced. Only fields declared here are shown on a card,
+ * and an unregistered kind renders nothing rather than guessing at keys.
+ */
+export interface ProjectSourceField {
+  /** Key in the upstream `source` object, e.g. `playlist`. */
+  name: string;
+  label: string;
+}
+
+export interface ProjectSourceKind {
+  /** Also the `source.type` value upstream. */
+  id: string;
+  label: string;
+  fields: readonly ProjectSourceField[];
+}
+
+export const PROJECT_SOURCE_KINDS: readonly ProjectSourceKind[] = [
+  {
+    id: "hls",
+    label: "HLS stream",
+    fields: [
+      { name: "title", label: "Title" },
+      { name: "playlist", label: "Playlist" },
+      { name: "poster", label: "Poster" },
+      { name: "thumbnails", label: "Thumbnails" },
+      { name: "captions", label: "Captions" },
+      { name: "chapters", label: "Chapters" },
+    ],
+  },
+];
+
 export function getProjectInputKind(id: string): ProjectKind | undefined {
   return PROJECT_INPUT_KINDS.find((kind) => kind.id === id);
 }
 
 export function getProjectOutputKind(id: string): ProjectKind | undefined {
   return PROJECT_OUTPUT_KINDS.find((kind) => kind.id === id);
+}
+
+export function getProjectSourceKind(id: string): ProjectSourceKind | undefined {
+  return PROJECT_SOURCE_KINDS.find((kind) => kind.id === id);
 }
 
 /** Fields that hold a value the user can edit (everything but layout glue). */
@@ -604,9 +644,32 @@ export function summarizeProjectInput(
   const kind = getProjectInputKind(type);
   if (!kind) return [];
 
+  return summarizeFields(kind.fields, input);
+}
+
+/**
+ * The result rows a processed project reports in `source`. Same rules as
+ * `summarizeProjectInput`: declared fields only, non-empty strings only — the
+ * values are storage keys, so they are shown verbatim rather than turned into
+ * links we cannot resolve.
+ */
+export function summarizeProjectSource(
+  source: Readonly<Record<string, unknown>>,
+): ProjectFieldSummary[] {
+  const type = typeof source.type === "string" ? source.type : "";
+  const kind = getProjectSourceKind(type);
+  if (!kind) return [];
+
+  return summarizeFields(kind.fields, source);
+}
+
+function summarizeFields(
+  fields: readonly { name: string; label: string }[],
+  values: Readonly<Record<string, unknown>>,
+): ProjectFieldSummary[] {
   const rows: ProjectFieldSummary[] = [];
-  for (const field of kind.fields) {
-    const value = input[field.name];
+  for (const field of fields) {
+    const value = values[field.name];
     if (typeof value === "string" && value.trim() !== "") {
       rows.push({ label: field.label, value });
     }

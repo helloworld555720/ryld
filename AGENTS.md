@@ -91,6 +91,15 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
   submission saves a draft. Submission is irreversible through the API — a pending project
   answers `409` to `DELETE` — which is why the reversible action is the default.
   `projectStatusLabel()` gives `pending` copy and the card shows the status the API returns.
+- **A processed project reports its result in `source`.** `source` is `null` on creation; once
+  a submitted project finishes, the API fills it with a discriminated object — `hls` so far,
+  carrying `title`, `playlist`, `poster`, `thumbnails`, `captions` and `chapters`, all of which
+  are storage keys relative to the output rather than URLs. `PROJECT_SOURCE_KINDS` in
+  `lib/projects.ts` turns the kind into card rows (`summarizeProjectSource`), so a new result
+  kind is one registry entry. Because the vocabulary is the API's, `projectSchema` validates
+  only that `source` is `null` or an object with a non-empty `type`: an unknown kind renders no
+  rows instead of failing the whole list. Failed projects keep `source: null`, and nothing but
+  a `draft` can be deleted (`409` after submission).
 - **The projects page lists them as cards.** `GET /jobs/` is read server-side
   (`lib/api/projects.ts`, no hop through our own BFF) and rendered by
   `components/app/project-card.tsx`. The card is registry-driven like the form: the title,
@@ -579,6 +588,19 @@ those files; re-run the CLI instead.
   delete of a pending project answers `409`. Two probe projects created with `submit: true`
   remain upstream as `pending` because they can no longer be deleted — they are recorded
   here rather than worked around.
+- **2026-11-21** — A **processed project reports a `source`**, which supersedes the assumption
+  that `source` stays `null`. A submitted `youtube → s3` project moved `pending` →
+  `completed`, and the API filled `source` with
+  `{title, playlist, poster, thumbnails, captions, chapters, type: "hls"}` — six storage keys
+  under one output prefix plus the video title, not URLs, so nothing is linkified (there is no
+  bucket in `output` to resolve them against). `PROJECT_SOURCE_KINDS` + `summarizeProjectSource`
+  render those rows under an `HLS stream` heading on the card, only when `source` is present,
+  so a draft keeps its small card. `projectSchema` deliberately validates only
+  `{type: string}` and lets every other key through (`catchall`), because the result kinds are
+  upstream's vocabulary and a new one must not fail the whole projects list; an unregistered
+  kind renders no rows. The same probe showed `failed` is a terminal status too, and that a
+  `completed` or `failed` project answers `409` to `DELETE` just like `pending` — only `draft`
+  is deletable, so the two earlier probe projects still cannot be removed.
 
 ## 11. Deferred / follow-ups
 

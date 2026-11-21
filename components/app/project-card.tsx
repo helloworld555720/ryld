@@ -15,8 +15,11 @@ import type { Project } from "@/lib/api/schemas/projects";
 import {
   getProjectInputKind,
   getProjectOutputKind,
+  getProjectSourceKind,
   projectStatusLabel,
   summarizeProjectInput,
+  summarizeProjectSource,
+  type ProjectFieldSummary,
 } from "@/lib/projects";
 
 type BadgeVariant = ComponentProps<typeof Badge>["variant"];
@@ -36,20 +39,46 @@ function statusVariant(status: string): BadgeVariant {
   }
 }
 
+/**
+ * Values can be long (links, Drive file ids, storage keys) and the card is one
+ * column wide: truncate the display, keep the whole value in the tooltip and in
+ * the DOM for copying.
+ */
+function DetailRows({ rows }: { rows: readonly ProjectFieldSummary[] }) {
+  return (
+    <dl className="space-y-1.5">
+      {rows.map((row) => (
+        <div key={row.label} className="flex items-baseline gap-2 text-xs">
+          <dt className="text-muted-foreground shrink-0">{row.label}</dt>
+          <dd className="min-w-0 truncate font-medium" title={row.value}>
+            {row.value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export interface ProjectCardProps {
   project: Project;
 }
 
 /**
- * One project: where it comes from, where it goes, and the registry-declared
- * fields the API stored for it. The card knows no provider — it reads the same
- * input/output registries the form does, so a new source renders here for free.
+ * One project: where it comes from, where it goes, the registry-declared fields
+ * the API stored for it, and — once it has been processed — the result the API
+ * reports in `source`. The card knows no provider: it reads the same
+ * input/output/source registries the rest of the app does, so a new kind
+ * renders here for free.
  */
 export function ProjectCard({ project }: ProjectCardProps) {
   const inputKind = getProjectInputKind(project.input.type);
   const outputKind = getProjectOutputKind(project.output.type);
   const Icon = inputKind?.icon ?? FolderClosed;
   const rows = summarizeProjectInput(project.input.type, project.input);
+
+  const source = project.source ?? null;
+  const sourceKind = source ? getProjectSourceKind(source.type) : undefined;
+  const resultRows = source ? summarizeProjectSource(source) : [];
 
   return (
     <Card>
@@ -78,28 +107,26 @@ export function ProjectCard({ project }: ProjectCardProps) {
         </CardAction>
       </CardHeader>
 
-      <CardContent>
+      <CardContent className="space-y-3">
         {rows.length === 0 ? (
           <p className="text-muted-foreground text-xs">No details recorded.</p>
         ) : (
-          <dl className="space-y-1.5">
-            {rows.map((row) => (
-              /*
-               * Values can be long (links, Drive file ids) and the card is one
-               * column wide: truncate the display, keep the whole value in the
-               * tooltip and in the DOM for copying.
-               */
-              <div
-                key={row.label}
-                className="flex items-baseline gap-2 text-xs"
-              >
-                <dt className="text-muted-foreground shrink-0">{row.label}</dt>
-                <dd className="min-w-0 truncate font-medium" title={row.value}>
-                  {row.value}
-                </dd>
-              </div>
-            ))}
-          </dl>
+          <DetailRows rows={rows} />
+        )}
+
+        {resultRows.length === 0 ? null : (
+          /*
+           * The result appears only once the API has filled `source`, so the
+           * card does not grow a heading for a project that has no output yet.
+           */
+          <div className="border-t pt-3">
+            <h3 className="text-muted-foreground text-xs font-medium">
+              {sourceKind?.label ?? source?.type}
+            </h3>
+            <div className="mt-1.5">
+              <DetailRows rows={resultRows} />
+            </div>
+          </div>
         )}
       </CardContent>
 

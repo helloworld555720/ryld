@@ -8,12 +8,14 @@ import {
 import {
   PROJECT_INPUT_KINDS,
   PROJECT_OUTPUT_KINDS,
+  PROJECT_SOURCE_KINDS,
   buildProjectDraft,
   fieldLayout,
   initialFieldValues,
   isYouTubeHost,
   projectStatusLabel,
   summarizeProjectInput,
+  summarizeProjectSource,
 } from "@/lib/projects";
 
 const YOUTUBE_CONNECTION = "a00501a9-b033-448e-9a38-cc67655c508f";
@@ -49,6 +51,17 @@ const youtubeOutput = {
   made_for_kids: false,
   contains_synthetic_media: null,
   thumbnail_url: null,
+};
+
+/** The result block the API fills in once a project has been processed. */
+const completedSource = {
+  title: "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
+  playlist: "79b7ea43c1fd45629757a55397e83a3b/master.m3u8",
+  poster: "79b7ea43c1fd45629757a55397e83a3b/thumbnail.jpg",
+  thumbnails: "79b7ea43c1fd45629757a55397e83a3b/storyboard.vtt",
+  captions: "79b7ea43c1fd45629757a55397e83a3b/captions.vtt",
+  chapters: "79b7ea43c1fd45629757a55397e83a3b/chapters.vtt",
+  type: "hls",
 };
 
 describe("projectCreateSchema", () => {
@@ -276,6 +289,44 @@ describe("projectSchema", () => {
     });
 
     expect(parsed.success).toBe(true);
+  });
+
+  it("reads the result a completed project reports in source", () => {
+    const parsed = projectSchema.safeParse({
+      ...example,
+      id: "e6bef3ab-33e7-427f-a979-1fbf94a31e10",
+      status: "completed",
+      source: completedSource,
+      submit: true,
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.source).toEqual(completedSource);
+  });
+
+  it("keeps result kinds it does not know, so one new kind cannot fail the list", () => {
+    const parsed = projectSchema.safeParse({
+      ...example,
+      id: "e6bef3ab-33e7-427f-a979-1fbf94a31e10",
+      status: "completed",
+      source: { type: "mp4", file: "out.mp4" },
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects a source that is not an object with a type", () => {
+    for (const source of ["hls", 42, {}, { title: "no type" }]) {
+      expect(
+        projectSchema.safeParse({
+          ...example,
+          id: "e6bef3ab-33e7-427f-a979-1fbf94a31e10",
+          status: "completed",
+          source,
+        }).success,
+        JSON.stringify(source),
+      ).toBe(false);
+    }
   });
 });
 
@@ -609,6 +660,44 @@ describe("summarizeProjectInput", () => {
     expect(summarizeProjectInput("vimeo", { url: "https://vimeo.com/1" })).toEqual(
       [],
     );
+  });
+});
+
+describe("summarizeProjectSource", () => {
+  it("reads the artefacts of a processed project in registry order", () => {
+    expect(summarizeProjectSource(completedSource)).toEqual([
+      { label: "Title", value: completedSource.title },
+      { label: "Playlist", value: completedSource.playlist },
+      { label: "Poster", value: completedSource.poster },
+      { label: "Thumbnails", value: completedSource.thumbnails },
+      { label: "Captions", value: completedSource.captions },
+      { label: "Chapters", value: completedSource.chapters },
+    ]);
+  });
+
+  it("drops fields the registry does not declare", () => {
+    expect(
+      summarizeProjectSource({ type: "hls", playlist: "a/master.m3u8", key: "x" }),
+    ).toEqual([{ label: "Playlist", value: "a/master.m3u8" }]);
+  });
+
+  it("drops empty and non-string values instead of rendering them", () => {
+    expect(
+      summarizeProjectSource({ type: "hls", title: "  ", playlist: [1, 2] }),
+    ).toEqual([]);
+  });
+
+  it("returns nothing for a result kind the registry does not know", () => {
+    expect(summarizeProjectSource({ type: "mp4", file: "out.mp4" })).toEqual([]);
+    expect(summarizeProjectSource({ playlist: "a/master.m3u8" })).toEqual([]);
+  });
+
+  it("declares a label for every result kind", () => {
+    for (const kind of PROJECT_SOURCE_KINDS) {
+      expect(kind.id, kind.label).not.toBe("");
+      expect(kind.label).not.toBe("");
+      expect(kind.fields.length).toBeGreaterThan(0);
+    }
   });
 });
 
