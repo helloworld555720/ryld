@@ -9,21 +9,22 @@ import { listProjects } from "@/lib/api/projects";
 import type { Project } from "@/lib/api/schemas/projects";
 import { isApiError } from "@/lib/errors";
 import { log } from "@/lib/log";
-import type { GdriveAccount } from "@/lib/projects";
+import type { ConnectedAccount } from "@/lib/projects";
 
 export const instant = false;
 
 /**
- * A Drive source needs the caller's connected accounts before the Picker can
- * run. A failed list is logged and treated as empty: the page still creates
- * YouTube projects, and the Drive field explains what is missing.
+ * Sources and destinations need the caller's connected accounts before their
+ * pickers can work. A failed list is logged and treated as empty: the page
+ * still creates S3 projects, and each account field explains what is missing.
  */
-async function readGdriveAccounts(): Promise<GdriveAccount[]> {
+async function readAccounts(): Promise<ConnectedAccount[]> {
   try {
     const connections = await listConnections();
-    return connections
-      .filter((connection) => connection.type === "gdrive")
-      .map((connection) => ({ id: connection.id }));
+    return connections.map((connection) => ({
+      id: connection.id,
+      type: connection.type,
+    }));
   } catch (error) {
     log("error", "projects.connections_failed", {
       reason: isApiError(error) ? error.code : "UNKNOWN",
@@ -50,8 +51,8 @@ async function readProjects(): Promise<Project[] | null> {
 }
 
 export default async function ProjectsPage() {
-  const [gdriveAccounts, projects] = await Promise.all([
-    readGdriveAccounts(),
+  const [accounts, projects] = await Promise.all([
+    readAccounts(),
     readProjects(),
   ]);
 
@@ -61,7 +62,7 @@ export default async function ProjectsPage() {
         eyebrow="Workspace"
         title="Projects"
         description="Turn a source into a destination. Everything else runs in the background."
-        actions={<CreateProjectDialog gdriveAccounts={gdriveAccounts} />}
+        actions={<CreateProjectDialog accounts={accounts} />}
       />
 
       <section aria-label="Projects" className="space-y-4">

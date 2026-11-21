@@ -9,11 +9,15 @@ import {
   PROJECT_INPUT_KINDS,
   PROJECT_OUTPUT_KINDS,
   buildProjectDraft,
+  fieldLayout,
   initialFieldValues,
   isYouTubeHost,
   projectStatusLabel,
   summarizeProjectInput,
 } from "@/lib/projects";
+
+const YOUTUBE_CONNECTION = "a00501a9-b033-448e-9a38-cc67655c508f";
+const GDRIVE_CONNECTION = "23d7949e-0f85-4a64-ab5b-a855e39fc3b5";
 
 const example = {
   input: { url: "https://youtu.be/sKJvJCsey84", type: "youtube" },
@@ -23,16 +27,55 @@ const example = {
 const gdriveExample = {
   input: {
     type: "gdrive",
-    conn_id: "23d7949e-0f85-4a64-ab5b-a855e39fc3b5",
+    conn_id: GDRIVE_CONNECTION,
     file_id: "1AbCdEfGhIjKlMnOpQrStUvWxYz",
   },
   output: { type: "s3" },
+};
+
+/** The output block the API echoes back for a YouTube destination. */
+const youtubeOutput = {
+  type: "youtube",
+  conn_id: YOUTUBE_CONNECTION,
+  title: null,
+  description: null,
+  tags: null,
+  category_id: "22",
+  default_language: null,
+  privacy: "private",
+  publish_at: null,
+  embeddable: true,
+  public_stats_viewable: true,
+  made_for_kids: false,
+  contains_synthetic_media: null,
+  thumbnail_url: null,
 };
 
 describe("projectCreateSchema", () => {
   it("accepts the example payload", () => {
     const parsed = projectCreateSchema.safeParse(example);
     expect(parsed.success).toBe(true);
+  });
+
+  it("defaults submit to false, which leaves a draft", () => {
+    const parsed = projectCreateSchema.safeParse(example);
+
+    expect(parsed.success && parsed.data.submit).toBe(false);
+  });
+
+  it("keeps submit true so the API queues the project", () => {
+    const parsed = projectCreateSchema.safeParse({ ...example, submit: true });
+
+    expect(parsed.success && parsed.data.submit).toBe(true);
+  });
+
+  it("rejects a submit value that is not a boolean", () => {
+    const parsed = projectCreateSchema.safeParse({
+      ...example,
+      submit: "true",
+    });
+
+    expect(parsed.success).toBe(false);
   });
 
   it("rejects a link that is not from YouTube", () => {
@@ -79,6 +122,7 @@ describe("projectCreateSchema", () => {
     expect(parsed.success && parsed.data).toEqual({
       input: { type: "youtube", url: "https://youtu.be/abc" },
       output: { type: "s3" },
+      submit: false,
     });
   });
 
@@ -111,7 +155,86 @@ describe("projectCreateSchema", () => {
     });
 
     expect(parsed.success).toBe(true);
-    expect(parsed.success && parsed.data).toEqual(gdriveExample);
+    expect(parsed.success && parsed.data).toEqual({
+      ...gdriveExample,
+      submit: false,
+    });
+  });
+
+  it("accepts the YouTube destination the API echoes back", () => {
+    const parsed = projectCreateSchema.safeParse({
+      ...gdriveExample,
+      output: youtubeOutput,
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data).toEqual({
+      ...gdriveExample,
+      output: youtubeOutput,
+      submit: false,
+    });
+  });
+
+  it("normalises the form's representation of each YouTube option", () => {
+    const parsed = projectCreateSchema.safeParse({
+      ...gdriveExample,
+      output: {
+        type: "youtube",
+        conn_id: YOUTUBE_CONNECTION,
+        title: "  Launch  ",
+        description: "   ",
+        tags: " demo , tutorial, ",
+        category_id: "28",
+        default_language: "en",
+        privacy: "unlisted",
+        publish_at: "2027-01-01T10:00",
+        embeddable: "false",
+        public_stats_viewable: "true",
+        made_for_kids: "false",
+        contains_synthetic_media: "unset",
+        thumbnail_url: "https://example.com/thumb.jpg",
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+
+    const output = parsed.data.output as Record<string, unknown>;
+    expect(output).toMatchObject({
+      title: "Launch",
+      description: null,
+      tags: ["demo", "tutorial"],
+      category_id: "28",
+      default_language: "en",
+      privacy: "unlisted",
+      embeddable: false,
+      public_stats_viewable: true,
+      made_for_kids: false,
+      contains_synthetic_media: null,
+      thumbnail_url: "https://example.com/thumb.jpg",
+    });
+    expect(Date.parse(String(output.publish_at))).toBe(
+      new Date("2027-01-01T10:00").getTime(),
+    );
+  });
+
+  it("rejects a YouTube destination without a real connection id", () => {
+    for (const conn_id of [undefined, "", "not-a-uuid"]) {
+      const parsed = projectCreateSchema.safeParse({
+        ...gdriveExample,
+        output: { ...youtubeOutput, conn_id },
+      });
+      expect(parsed.success, String(conn_id)).toBe(false);
+    }
+  });
+
+  it("rejects a privacy value YouTube does not offer", () => {
+    const parsed = projectCreateSchema.safeParse({
+      ...gdriveExample,
+      output: { ...youtubeOutput, privacy: "friends-only" },
+    });
+
+    expect(parsed.success).toBe(false);
   });
 });
 
@@ -129,6 +252,30 @@ describe("projectSchema", () => {
 
   it("requires an id, a status and both sides", () => {
     expect(projectSchema.safeParse(example).success).toBe(false);
+  });
+
+  it("reads a submitted project, which is pending rather than a draft", () => {
+    const parsed = projectSchema.safeParse({
+      ...example,
+      id: "e717898a-5209-474d-8917-4925885e5fe9",
+      status: "pending",
+      source: null,
+      submit: true,
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.status).toBe("pending");
+  });
+
+  it("still reads an older project with no submit field", () => {
+    const parsed = projectSchema.safeParse({
+      ...example,
+      id: "4f16f26a-0db3-4665-8cdd-c91e3a95c768",
+      status: "draft",
+      source: null,
+    });
+
+    expect(parsed.success).toBe(true);
   });
 });
 
@@ -173,6 +320,7 @@ describe("buildProjectDraft", () => {
     expect(draft).toEqual({
       input: { type: "youtube", url: "https://youtu.be/abc" },
       output: { type: "s3" },
+      submit: false,
     });
   });
 
@@ -187,6 +335,7 @@ describe("buildProjectDraft", () => {
     expect(draft).toEqual({
       input: { type: "vimeo" },
       output: { type: "s3" },
+      submit: false,
     });
     expect(projectCreateSchema.safeParse(draft).success).toBe(false);
   });
@@ -203,21 +352,68 @@ describe("buildProjectDraft", () => {
       output: {},
     });
 
-    expect(draft).toEqual(gdriveExample);
+    expect(draft).toEqual({ ...gdriveExample, submit: false });
+    expect(projectCreateSchema.safeParse(draft).success).toBe(true);
+  });
+
+  it("fills a YouTube destination with the API's defaults", () => {
+    const draft = buildProjectDraft({
+      inputType: "youtube",
+      outputType: "youtube",
+      input: { url: "https://youtu.be/abc" },
+      output: { conn_id: YOUTUBE_CONNECTION },
+    });
+
+    expect(draft).toEqual({
+      input: { type: "youtube", url: "https://youtu.be/abc" },
+      output: {
+        type: "youtube",
+        conn_id: YOUTUBE_CONNECTION,
+        title: "",
+        privacy: "private",
+        category_id: "22",
+        description: "",
+        tags: "",
+        default_language: "",
+        publish_at: "",
+        thumbnail_url: "",
+        embeddable: true,
+        public_stats_viewable: true,
+        made_for_kids: false,
+        contains_synthetic_media: "unset",
+      },
+      submit: false,
+    });
+    expect(projectCreateSchema.safeParse(draft).success).toBe(true);
+  });
+
+  it("asks the API to queue the project when submitted", () => {
+    const draft = buildProjectDraft({
+      inputType: "youtube",
+      outputType: "s3",
+      input: { url: "https://youtu.be/abc" },
+      output: {},
+      submit: true,
+    });
+
+    expect(draft).toMatchObject({ submit: true });
     expect(projectCreateSchema.safeParse(draft).success).toBe(true);
   });
 });
 
 describe("initialFieldValues", () => {
   const gdriveKind = PROJECT_INPUT_KINDS.find((kind) => kind.id === "gdrive");
+  const youtubeOutputKind = PROJECT_OUTPUT_KINDS.find(
+    (kind) => kind.id === "youtube",
+  );
 
   it("defaults the Drive account to the first connected one", () => {
     const values = initialFieldValues(gdriveKind!, [
-      { id: "23d7949e-0f85-4a64-ab5b-a855e39fc3b5" },
+      { id: GDRIVE_CONNECTION, type: "gdrive" },
     ]);
 
     expect(values).toEqual({
-      conn_id: "23d7949e-0f85-4a64-ab5b-a855e39fc3b5",
+      conn_id: GDRIVE_CONNECTION,
       file_id: "",
     });
   });
@@ -228,12 +424,38 @@ describe("initialFieldValues", () => {
     expect(values).toEqual({ conn_id: "", file_id: "" });
   });
 
-  it("does not invent values for kinds without a Drive account", () => {
+  it("defaults the YouTube destination to the first channel and the API's options", () => {
+    const values = initialFieldValues(youtubeOutputKind!, [
+      { id: GDRIVE_CONNECTION, type: "gdrive" },
+      { id: YOUTUBE_CONNECTION, type: "youtube" },
+    ]);
+
+    expect(values).toMatchObject({
+      conn_id: YOUTUBE_CONNECTION,
+      title: "",
+      privacy: "private",
+      category_id: "22",
+      embeddable: true,
+      public_stats_viewable: true,
+      made_for_kids: false,
+      contains_synthetic_media: "unset",
+    });
+  });
+
+  it("leaves the YouTube channel blank when no channel is connected", () => {
+    const values = initialFieldValues(youtubeOutputKind!, [
+      { id: GDRIVE_CONNECTION, type: "gdrive" },
+    ]);
+
+    expect(values.conn_id).toBe("");
+  });
+
+  it("does not invent values for kinds without an account field", () => {
     const youtube = PROJECT_INPUT_KINDS.find((kind) => kind.id === "youtube");
 
-    expect(initialFieldValues(youtube!, [{ id: "ignored" }])).toEqual({
-      url: "",
-    });
+    expect(
+      initialFieldValues(youtube!, [{ id: "ignored", type: "youtube" }]),
+    ).toEqual({ url: "" });
   });
 });
 
@@ -268,13 +490,76 @@ describe("registries", () => {
   });
 
   it("declares a control for every field that the form understands", () => {
-    const controls = new Set(["text", "gdrive-account", "gdrive-file"]);
+    const controls = new Set([
+      "text",
+      "textarea",
+      "select",
+      "switch",
+      "datetime",
+      "connection-account",
+      "gdrive-file",
+    ]);
 
     for (const kind of kinds) {
       for (const field of kind.fields) {
         expect(controls.has(field.control), `${kind.id}.${field.name}`).toBe(
           true,
         );
+      }
+    }
+  });
+
+  it("offers YouTube as a destination with the API's upload options", () => {
+    const youtube = PROJECT_OUTPUT_KINDS.find((kind) => kind.id === "youtube");
+
+    expect(youtube).toBeDefined();
+    expect(youtube!.fields.map((field) => field.name)).toEqual([
+      "conn_id",
+      "title",
+      "privacy",
+      "category_id",
+      "description",
+      "tags",
+      "default_language",
+      "publish_at",
+      "thumbnail_url",
+      "embeddable",
+      "public_stats_viewable",
+      "made_for_kids",
+      "contains_synthetic_media",
+    ]);
+  });
+
+  it("pairs half-width fields so the two-column grid has no holes", () => {
+    const youtube = PROJECT_OUTPUT_KINDS.find((kind) => kind.id === "youtube");
+    let width = 0;
+    let groupTitle: string | null | undefined;
+
+    for (const field of youtube!.fields) {
+      const title = field.group ?? null;
+      if (title !== groupTitle) {
+        expect(width, `row left open before ${title ?? "the first group"}`).toBe(
+          0,
+        );
+        width = 0;
+        groupTitle = title;
+      }
+
+      width += fieldLayout(field) === "half" ? 1 : 2;
+      if (width >= 2) {
+        expect(width, `${groupTitle ?? "first"}.${field.name}`).toBe(2);
+        width = 0;
+      }
+    }
+
+    expect(width, "row left open at the end").toBe(0);
+  });
+
+  it("opts every select into a default, so the first render is valid", () => {
+    for (const kind of kinds) {
+      for (const field of kind.fields) {
+        if (field.control !== "select") continue;
+        expect(field.defaultValue, `${kind.id}.${field.name}`).toBeDefined();
       }
     }
   });
@@ -330,6 +615,7 @@ describe("summarizeProjectInput", () => {
 describe("projectStatusLabel", () => {
   it("gives known statuses copy", () => {
     expect(projectStatusLabel("draft")).toBe("Draft");
+    expect(projectStatusLabel("pending")).toBe("Pending");
     expect(projectStatusLabel("Processing")).toBe("Processing");
     expect(projectStatusLabel("COMPLETED")).toBe("Completed");
     expect(projectStatusLabel("failed")).toBe("Failed");

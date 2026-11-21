@@ -229,9 +229,9 @@ rewrites `POST /api/backend/projects` → `POST /jobs/`. The trailing slash matt
 
 | Upstream call | Behaviour |
 | --- | --- |
-| `POST /jobs/` | `201` with the created object: `{"input":{"url":"…","type":"youtube"},"output":{"type":"s3"},"id":"<uuid>","status":"draft","source":null}`. Missing or invalid body → `422 {"detail":"Invalid request"}` (a fixed message with no field detail) |
+| `POST /jobs/` | `201` with the created object: `{"input":{"url":"…","type":"youtube"},"output":{"type":"s3"},"submit":false,"id":"<uuid>","status":"draft","source":null}`. Missing or invalid body → `422 {"detail":"Invalid request"}` (a fixed message with no field detail) |
 | `GET /jobs/` | `200` with an array of the same shape |
-| `DELETE /jobs/{id}` | `200 {"message":"Job deleted successfully"}` (verified; not exposed by this app) |
+| `DELETE /jobs/{id}` | `200 {"message":"Job deleted successfully"}` for a `draft`; `409 {"detail":"Job is not in 'draft' state"}` for anything already submitted (verified; not exposed by this app) |
 
 `GET /jobs/` is what `/projects` renders: one card per item, read server-side. The payload
 carries **no timestamp and no name**, so cards are ordered exactly as the API returns them
@@ -246,7 +246,25 @@ Observed validation:
 - The URL is not checked against the provider: `{"type":"youtube","url":"https://example.com/v"}`
   is accepted and created. The form validates `youtube.com`/`youtu.be` itself; that is a
   UX guard, not an upstream requirement.
-- Creation leaves `status: "draft"`. No transition into processing has been observed.
+- Creation leaves `status: "draft"` unless `submit: true` is set (see below). No transition
+  into processing has been observed on a draft.
+
+### Draft vs submitted (verified 2026-11-21)
+
+`POST /jobs/` gained a top-level `submit` boolean, next to `input` and `output`:
+
+| Request | Response |
+| --- | --- |
+| `{"submit": true, …}` | `201`, `status: "pending"`, `submit: true` echoed |
+| `{"submit": false, …}` | `201`, `status: "draft"`, `submit: false` echoed |
+| `…` without `submit` | `201`, `status: "draft"`, `submit: false` echoed — the field defaults to false |
+| `{"submit": "true", …}` | `201`, coerced to `true` upstream; this app only ever sends a real boolean |
+
+`GET /jobs/` reflects the transition: a submitted project is listed as `pending`, not
+`draft`. Deleting a submitted project answers `409 {"detail":"Job is not in 'draft'
+state"}` — submission is **irreversible through the API**, which is why the create dialog
+puts `Save as draft` before `Submit` and treats Enter as a draft. Both actions post the same
+payload; they differ only in `submit`.
 
 ### Google Drive sources (verified 2026-11-17)
 
@@ -262,6 +280,39 @@ with a throwaway file id:
 The file id is **not** validated upstream at creation time — an invented id is accepted, so
 the Picker's own list is what makes the id real. `conn_id` must be a uuid the caller owns;
 an unknown one is accepted by `/jobs/` and can only fail later during processing.
+
+### YouTube destinations (verified 2026-11-20)
+
+A YouTube destination is `{"type":"youtube","conn_id":"<uuid>"}`. The API accepts the whole
+upload-metadata block and **echoes every field back with its default** when it is omitted, so
+those defaults are part of the contract and are what the create dialog starts from:
+
+| Field | Default when omitted | Notes |
+| --- | --- | --- |
+| `title` | `null` | Up to 100 characters |
+| `description` | `null` | Up to 5000 characters |
+| `tags` | `null` | An array of strings, not a comma string |
+| `category_id` | `"22"` | Assignable ids: 1, 2, 10, 15, 17, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29 |
+| `default_language` | `null` | Language code such as `en` or `en-US` |
+| `privacy` | `"private"` | `private`, `unlisted` or `public` |
+| `publish_at` | `null` | ISO instant |
+| `embeddable` | `true` | |
+| `public_stats_viewable` | `true` | |
+| `made_for_kids` | `false` | |
+| `contains_synthetic_media` | `null` | Tri-state: `true`, `false` or unset |
+| `thumbnail_url` | `null` | |
+
+Verified live 2026-11-20: `POST /jobs/` with
+`{"input":{"type":"gdrive","conn_id":"…","file_id":"…"},"output":{"type":"youtube","conn_id":"…"}}`
+answers `201` and echoes all twelve option fields with the defaults above. Sending every field
+explicitly (title, description, tags, category `28`, language `en`, `unlisted`, `publish_at`,
+booleans) also answers `201`, so the whole block round-trips. Every created job was deleted
+afterwards by its exact id.
+
+`GET /jobs/options` and `GET /jobs/categories` exist but answer `422 {"detail":"Invalid
+request"}` for every parameter shape tried (`type`, `output_type`, `conn_id`, `provider`,
+`connection_id`, …). The create response is the only observed option set, so the registry's
+option lists come from there plus YouTube's documented assignable categories.
 
 ### Google Drive Picker credential endpoints (probing 2026-11-17)
 

@@ -15,11 +15,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import type { GdriveAccount } from "@/lib/projects";
+import type { ConnectedAccount } from "@/lib/projects";
 
 export interface CreateProjectDialogProps {
-  /** Connected Drive accounts, read on the server for the Picker. */
-  gdriveAccounts: readonly GdriveAccount[];
+  /** Every account the caller has, read on the server for the field pickers. */
+  accounts: readonly ConnectedAccount[];
 }
 
 /**
@@ -28,7 +28,7 @@ export interface CreateProjectDialogProps {
  * permanently, so the form lives here and closes on success.
  */
 export function CreateProjectDialog({
-  gdriveAccounts,
+  accounts,
 }: CreateProjectDialogProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -48,24 +48,24 @@ export function CreateProjectDialog({
         reachable. Radix unmounts the content when the dialog closes, which is
         why a reopened dialog starts from a clean draft.
       */}
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>New project</DialogTitle>
           <DialogDescription>
-            Choose a source and a destination. Ryld handles the rest in the
-            background.
+            Choose a source and a destination, then save a draft to keep editing
+            or submit it to start processing.
           </DialogDescription>
         </DialogHeader>
 
         <CreateProjectForm
-          gdriveAccounts={gdriveAccounts}
-          onCreated={(id) => {
+          accounts={accounts}
+          onCreated={({ id, submitted }) => {
             setOpen(false);
             // The card list is server-rendered: refresh so the new project
             // appears without a manual reload.
             router.refresh();
             toast.success(
-              "Project created",
+              submitted ? "Project submitted" : "Draft saved",
               id ? { description: `Reference ${id.slice(0, 8)}.` } : undefined,
             );
           }}

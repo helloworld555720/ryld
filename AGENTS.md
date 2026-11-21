@@ -83,6 +83,14 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
   fields are forwarded to the API's `POST /jobs/`. The API calls the resource a *job*;
   this app never does — the browser path and every identifier here say project, and
   the rename lives in `lib/api/endpoints.ts`.
+- **A project is saved as a draft or submitted.** `POST /jobs/` takes a top-level
+  `submit` boolean (added upstream 2026-11-21): `true` queues it (`status: "pending"`),
+  `false` or omitted leaves `status: "draft"`. The dialog therefore ends in two buttons,
+  `Save as draft` (outline, first in the DOM) and `Submit`; they post the same validated
+  payload and differ only in `submit`. Enter activates the first button, so implicit
+  submission saves a draft. Submission is irreversible through the API — a pending project
+  answers `409` to `DELETE` — which is why the reversible action is the default.
+  `projectStatusLabel()` gives `pending` copy and the card shows the status the API returns.
 - **The projects page lists them as cards.** `GET /jobs/` is read server-side
   (`lib/api/projects.ts`, no hop through our own BFF) and rendered by
   `components/app/project-card.tsx`. The card is registry-driven like the form: the title,
@@ -92,7 +100,7 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
   could not ask. Creating through the dialog calls `router.refresh()` so the new card shows
   without a reload.
 - **A Google Drive source is a file you already own.** The registry declares a
-  `gdrive-account` field (`conn_id`, defaulting to the first connected Drive account) and a
+  `connection-account` field (`conn_id`, defaulting to the first connected Drive account) and a
   `gdrive-file` field (`file_id`), so the payload is `{type, conn_id, file_id}`. The file is
   chosen with Google's Picker in the browser: `components/app/google-drive-file-picker.tsx`
   loads `https://apis.google.com/js/api.js` on demand (`gapi.load("picker")`), fetches
@@ -103,6 +111,19 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
   submitted. CSP keeps the Picker iframe working with one `frame-src` host and nothing else:
   the script is appended dynamically, so `strict-dynamic` trusts it and `script-src` gained
   no remote host.
+- **A YouTube destination publishes to a connected channel.** The registry declares a
+  `connection-account` field (`conn_id`, defaulting to the first connected YouTube account)
+  plus the twelve upload options the API accepts and echoes back with defaults: `title`,
+  `description`, `tags`, `category_id`, `default_language`, `privacy`, `publish_at`,
+  `embeddable`, `public_stats_viewable`, `made_for_kids`, `contains_synthetic_media` and
+  `thumbnail_url`. Each field carries its own `control` (`text`, `textarea`, `select`,
+  `switch`, `datetime`) and its own zod schema, so the form renders it and both sides of the
+  BFF validate it from the registry alone. A field schema accepts the form's value *and* the
+  wire value and normalises to the wire one (blank text → `null`, `"a, b"` → `["a","b"]`,
+  `"true"` → `true`, `datetime-local` → ISO instant, `"unset"` → `null`). The dialog groups
+  the options under `Details`, `Playback` and `Audience` from each field's `group`, and lays
+  them out in a two-column grid where `fieldLayout()` (or a field's `layout`) decides full or
+  half width. S3 stays the default destination; YouTube is second.
 - No refresh tokens, no token storage, no client secret.
 
 ## 4. Repo layout
@@ -523,6 +544,41 @@ those files; re-run the CLI instead.
   card appears immediately. Verified live 2026-11-20: empty state, then a real creation
   produced a card with `Draft`, the URL row and the reference, and the test project was
   deleted afterwards by its exact id.
+- **2026-11-20** — Added **YouTube as a Projects destination** (owner request), exposing the
+  upload options the API echoes on creation. `lib/projects.ts` grew a richer field model: a
+  field now declares a `control` (`text`, `textarea`, `select`, `switch`, `datetime`,
+  `connection-account`, `gdrive-file`), `options`, `provider`, `defaultValue`, `group` and an
+  optional `layout`, plus a `schema` that is used by the form *and* the BFF. Each schema
+  accepts the form's representation and the wire representation and normalises to the wire
+  one, so the browser's `projectCreateSchema` output is what the BFF parses again. The
+  connect-account control replaced the Drive-only `gdrive-account` one and now serves both
+  `conn_id` fields; the page passes *all* connections, not just Drive ones. The dialog
+  (`sm:max-w-2xl`) renders each side's fields in registry order, a heading per `group`
+  (Details, Playback, Audience) and a two-column grid whose spans come from `fieldLayout()`;
+  toggles render as a horizontal row whose label side also toggles the switch, because a
+  `<label for>` cannot activate a button. S3 remains the first output kind (default
+  selection); YouTube is second. Category ids and labels live in `YOUTUBE_CATEGORIES`.
+  `GET /jobs/options` and `/jobs/categories` answer `422` for every parameter shape tried, so
+  the create response is the option set we build from. Verified in the browser 2026-11-20:
+  the dialog renders all twelve options plus the account picker with the API defaults
+  (private, 22, embeddable, public stats, not made for kids, altered content unset), an empty
+  URL shows "Paste a video link." without firing a request, and a real creation posted the
+  expected body (`tags` as an array, empty text as `null`) and rendered a `YouTube → YouTube`
+  card; that job was deleted by its exact id. Created jobs from earlier probing were left
+  alone.
+- **2026-11-21** — Upstream added a top-level **`submit`** boolean to `POST /jobs/`: `true`
+  creates the project as `pending`, `false`/omitted as `draft`. The create dialog now ends in
+  **`Save as draft`** (outline) and **`Submit`**, which post the same payload and differ only
+  in `submit`; `buildProjectDraft()` always sends the flag explicitly, and
+  `projectCreateSchema` normalises it to a boolean (`z.boolean().default(false)`) so the BFF
+  forwards one shape. Enter picks the first button, which is the draft one, because the API
+  cannot undo a submission: `DELETE /jobs/{id}` answers `409` for anything not in `draft`.
+  The toast and the dialog copy distinguish the two outcomes, and `pending` joined
+  `projectStatusLabel()`. Verified upstream 2026-11-21: `submit: true` → `201 pending`,
+  `false`/omitted → `201 draft`, `"true"` is coerced upstream (we never send a string), and a
+  delete of a pending project answers `409`. Two probe projects created with `submit: true`
+  remain upstream as `pending` because they can no longer be deleted — they are recorded
+  here rather than worked around.
 
 ## 11. Deferred / follow-ups
 

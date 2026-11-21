@@ -7,6 +7,11 @@ import { z } from "zod";
  * extensible registries: adding a source or destination means adding an entry
  * here, and the form grows automatically from its `fields`.
  *
+ * A field declares both how it renders (`control`) and what the API receives
+ * (`schema`). The schema is the single source of truth on both sides of the
+ * BFF, so it accepts the form's representation *and* the wire representation
+ * and normalises to the wire one — see the comment on `ProjectField.schema`.
+ *
  * Client-safe: no URLs, no secrets, no "job" terminology. The API happens to
  * call the upstream resource `jobs`; in this app it is always a project.
  */
@@ -14,10 +19,30 @@ import { z } from "zod";
 export type ProjectFieldInputType = "url" | "text";
 
 /**
- * How the form renders a field. `text` uses its HTML `inputType`; the gdrive
- * controls are driven by the Picker and by the caller's connected accounts.
+ * How the form renders a field:
+ * - `text`, `textarea`, `numeric` — plain inputs (`text` uses `inputType`)
+ * - `select` — a picker over `options`
+ * - `switch` — a boolean toggle
+ * - `datetime` — `datetime-local`, sent to the API as an ISO instant
+ * - `connection-account` — the caller's connected accounts for `provider`
+ * - `gdrive-file` — Google's Picker, fills a Drive file id
  */
-export type ProjectFieldControl = "text" | "gdrive-account" | "gdrive-file";
+export type ProjectFieldControl =
+  | "text"
+  | "textarea"
+  | "select"
+  | "switch"
+  | "datetime"
+  | "connection-account"
+  | "gdrive-file";
+
+export interface ProjectFieldOption {
+  value: string;
+  label: string;
+}
+
+/** What the form holds for one field: text, or a switch's boolean. */
+export type ProjectFieldValue = string | boolean;
 
 export interface ProjectField {
   /** Key in the upstream object for this side, e.g. `url`. */
@@ -29,11 +54,27 @@ export interface ProjectField {
   inputType?: ProjectFieldInputType;
   placeholder?: string;
   description?: string;
+  /** Choices for `control: "select"`. */
+  options?: readonly ProjectFieldOption[];
+  /** Provider id a `connection-account` field selects from. */
+  provider?: string;
+  /** Value the form starts with; text falls back to "", switch to false. */
+  defaultValue?: ProjectFieldValue;
+  /** Subheading this field renders under, within its side. */
+  group?: string;
+  /** Overrides `fieldLayout()`'s default width in the two-column grid. */
+  layout?: ProjectFieldLayout;
   /**
-   * Value validation. Required for every field: the registry is the single
-   * source of truth for what the form accepts and what the BFF forwards.
+   * Validation *and* normalisation, used by the form and by the BFF alike.
+   *
+   * A field receives either the form's representation (a string, or a boolean
+   * from a switch) or the wire representation (the already-normalised value,
+   * because the client posts `projectCreateSchema`'s output). It must accept
+   * both and be idempotent: empty text becomes `null`, a comma-separated list
+   * becomes an array, `"true"` becomes `true`, a local datetime becomes an ISO
+   * instant.
    */
-  schema: z.ZodType<string>;
+  schema: z.ZodType;
 }
 
 export interface ProjectKind {
@@ -56,6 +97,116 @@ export function isYouTubeHost(hostname: string): boolean {
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* Field schemas                                                              */
+/* -------------------------------------------------------------------------- */
+
+/** Empty text is `null` upstream, which is how the API stores "not set". */
+function optionalText(max: number, message: string) {
+  return z
+    .string()
+    .max(max, message)
+    .nullable()
+    .optional()
+    .transform((value) => {
+      const text = typeof value === "string" ? value.trim() : "";
+      return text === "" ? null : text;
+    });
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+const optionalHttpUrl = z
+  .string()
+  .nullable()
+  .optional()
+  .transform((value) => {
+    const text = typeof value === "string" ? value.trim() : "";
+    return text === "" ? null : text;
+  })
+  .refine(
+    (value) => value === null || isHttpUrl(value),
+    "Use an http(s) link.",
+  );
+
+/** "tag, tag" in the form, `["tag", "tag"]` on the wire (or `null`). */
+const tagsSchema = z
+  .union([z.array(z.string()), z.string()])
+  .nullable()
+  .optional()
+  .transform((value) => {
+    const list = Array.isArray(value)
+      ? value
+      : typeof value === "string"
+        ? value.split(",")
+        : [];
+
+    const tags = list.map((tag) => tag.trim()).filter((tag) => tag.length > 0);
+    return tags.length > 0 ? tags : null;
+  })
+  .refine(
+    (tags) => tags === null || tags.length <= 30,
+    "Use 30 tags or fewer.",
+  )
+  .refine(
+    (tags) => tags === null || tags.every((tag) => tag.length <= 100),
+    "Tags are 100 characters or fewer.",
+  );
+
+/** A switch value: the form's "true"/"false" or the wire's boolean. */
+function booleanWith(fallback: boolean) {
+  return z
+    .union([z.boolean(), z.enum(["true", "false"])])
+    .nullable()
+    .optional()
+    .transform((value) =>
+      value == null ? fallback : value === true || value === "true",
+    );
+}
+
+/** Tri-state: `"unset"` in the form, `null` on the wire. */
+const optionalBoolean = z
+  .union([z.boolean(), z.enum(["true", "false", "unset"])])
+  .nullable()
+  .optional()
+  .transform((value) =>
+    value == null || value === "unset"
+      ? null
+      : value === true || value === "true",
+  );
+
+/** `datetime-local` in the form (local time), an ISO instant on the wire. */
+const optionalInstant = z
+  .string()
+  .nullable()
+  .optional()
+  .transform((value) => {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (text === "") return null;
+
+    const date = new Date(text);
+    return Number.isNaN(date.getTime()) ? text : date.toISOString();
+  })
+  .refine(
+    (value) => value === null || !Number.isNaN(Date.parse(value)),
+    "Choose a valid date and time.",
+  );
+
+const optionalLanguage = optionalText(
+  15,
+  "Use a language code, like en or en-US.",
+).refine(
+  (value) => value === null || /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(value),
+  "Use a language code, like en or en-US.",
+);
+
 const youtubeUrl = z
   .string()
   .trim()
@@ -71,6 +222,10 @@ const youtubeUrl = z
     if (url.protocol !== "https:" && url.protocol !== "http:") return false;
     return isYouTubeHost(url.hostname);
   }, "Use a youtube.com or youtu.be link.");
+
+/* -------------------------------------------------------------------------- */
+/* Registries                                                                 */
+/* -------------------------------------------------------------------------- */
 
 /**
  * Sources the UI offers. The first entry is the default selection.
@@ -111,7 +266,8 @@ export const PROJECT_INPUT_KINDS: readonly ProjectKind[] = [
       {
         name: "conn_id",
         label: "Google Drive account",
-        control: "gdrive-account",
+        control: "connection-account",
+        provider: "gdrive",
         description: "The connected account the file belongs to.",
         schema: z.uuid({ error: "Choose a Google Drive account." }),
       },
@@ -126,6 +282,33 @@ export const PROJECT_INPUT_KINDS: readonly ProjectKind[] = [
   },
 ];
 
+/**
+ * YouTube's assignable upload categories. The ids are the stable part; the
+ * labels are the names YouTube shows in most regions. `22` (People & Blogs) is
+ * the default the API applies when `category_id` is omitted.
+ */
+export const YOUTUBE_CATEGORIES: readonly ProjectFieldOption[] = [
+  { value: "1", label: "Film & Animation" },
+  { value: "2", label: "Autos & Vehicles" },
+  { value: "10", label: "Music" },
+  { value: "15", label: "Pets & Animals" },
+  { value: "17", label: "Sports" },
+  { value: "19", label: "Travel & Events" },
+  { value: "20", label: "Gaming" },
+  { value: "22", label: "People & Blogs" },
+  { value: "23", label: "Comedy" },
+  { value: "24", label: "Entertainment" },
+  { value: "25", label: "News & Politics" },
+  { value: "26", label: "Howto & Style" },
+  { value: "27", label: "Education" },
+  { value: "28", label: "Science & Technology" },
+  { value: "29", label: "Nonprofits & Activism" },
+];
+
+const categorySchema = z.enum(
+  YOUTUBE_CATEGORIES.map((category) => category.value),
+);
+
 /** Destinations the UI offers. The first entry is the default selection. */
 export const PROJECT_OUTPUT_KINDS: readonly ProjectKind[] = [
   {
@@ -134,6 +317,145 @@ export const PROJECT_OUTPUT_KINDS: readonly ProjectKind[] = [
     description: "Save the finished result to S3.",
     icon: HardDrive,
     fields: [],
+  },
+  {
+    /*
+     * Publishing to YouTube. The API accepts, and echoes back, the whole upload
+     * metadata block — so every field below is part of the contract, with the
+     * same defaults the API applies when it is omitted (private, category 22,
+     * embeddable, public stats).
+     */
+    id: "youtube",
+    label: "YouTube",
+    description: "Publish the result to a connected channel.",
+    icon: SquarePlay,
+    fields: [
+      {
+        name: "conn_id",
+        label: "YouTube account",
+        control: "connection-account",
+        provider: "youtube",
+        description: "The channel the video is uploaded to.",
+        schema: z.uuid({ error: "Choose a YouTube account." }),
+      },
+      {
+        name: "title",
+        label: "Title",
+        control: "text",
+        placeholder: "Video title",
+        description: "Up to 100 characters. Left empty, YouTube chooses one.",
+        schema: optionalText(100, "Titles are 100 characters or fewer."),
+      },
+      {
+        name: "privacy",
+        label: "Privacy",
+        control: "select",
+        options: [
+          { value: "private", label: "Private" },
+          { value: "unlisted", label: "Unlisted" },
+          { value: "public", label: "Public" },
+        ],
+        defaultValue: "private",
+        description: "Private until you publish it yourself.",
+        schema: z.enum(["private", "unlisted", "public"]),
+      },
+      {
+        name: "category_id",
+        label: "Category",
+        control: "select",
+        options: YOUTUBE_CATEGORIES,
+        defaultValue: "22",
+        description: "The YouTube category the video is filed under.",
+        schema: categorySchema,
+      },
+      {
+        name: "description",
+        label: "Description",
+        control: "textarea",
+        group: "Details",
+        placeholder: "What is this video about?",
+        description: "Up to 5000 characters.",
+        schema: optionalText(5000, "Descriptions are 5000 characters or fewer."),
+      },
+      {
+        name: "tags",
+        label: "Tags",
+        control: "text",
+        group: "Details",
+        placeholder: "tutorial, demo",
+        description: "Separate tags with commas.",
+        schema: tagsSchema,
+      },
+      {
+        name: "default_language",
+        label: "Language",
+        control: "text",
+        group: "Details",
+        layout: "half",
+        placeholder: "en",
+        description: "A language code, like en or en-US.",
+        schema: optionalLanguage,
+      },
+      {
+        name: "publish_at",
+        label: "Publish at",
+        control: "datetime",
+        group: "Details",
+        description: "Optional. Your local time; sent as an instant.",
+        schema: optionalInstant,
+      },
+      {
+        name: "thumbnail_url",
+        label: "Thumbnail URL",
+        control: "text",
+        inputType: "url",
+        group: "Details",
+        placeholder: "https://…",
+        description: "Optional. A JPEG or PNG YouTube can fetch.",
+        schema: optionalHttpUrl,
+      },
+      {
+        name: "embeddable",
+        label: "Embeddable",
+        control: "switch",
+        group: "Playback",
+        defaultValue: true,
+        description: "Let other sites embed the video.",
+        schema: booleanWith(true),
+      },
+      {
+        name: "public_stats_viewable",
+        label: "Public stats",
+        control: "switch",
+        group: "Playback",
+        defaultValue: true,
+        description: "Show the like count publicly.",
+        schema: booleanWith(true),
+      },
+      {
+        name: "made_for_kids",
+        label: "Made for kids",
+        control: "switch",
+        group: "Audience",
+        defaultValue: false,
+        description: "YouTube requires this for content aimed at children.",
+        schema: booleanWith(false),
+      },
+      {
+        name: "contains_synthetic_media",
+        label: "Altered content",
+        control: "select",
+        group: "Audience",
+        options: [
+          { value: "unset", label: "Not specified" },
+          { value: "true", label: "Yes, altered or synthetic" },
+          { value: "false", label: "No" },
+        ],
+        defaultValue: "unset",
+        description: "Disclose realistic synthetic media.",
+        schema: optionalBoolean,
+      },
+    ],
   },
 ];
 
@@ -145,31 +467,72 @@ export function getProjectOutputKind(id: string): ProjectKind | undefined {
   return PROJECT_OUTPUT_KINDS.find((kind) => kind.id === id);
 }
 
-/** Blank values for a kind's fields, used when the selection changes. */
-export function emptyFieldValues(kind: ProjectKind): Record<string, string> {
-  return Object.fromEntries(kind.fields.map((field) => [field.name, ""]));
+/** Fields that hold a value the user can edit (everything but layout glue). */
+export type ProjectFieldLayout = "full" | "half";
+
+/**
+ * Width of a field in the two-column grid. An entry can override it per field;
+ * otherwise long-form editing gets the full row and pickers and toggles pair
+ * up.
+ */
+export function fieldLayout(field: ProjectField): ProjectFieldLayout {
+  if (field.layout) return field.layout;
+
+  switch (field.control) {
+    case "select":
+    case "switch":
+    case "datetime":
+      return "half";
+    default:
+      return "full";
+  }
 }
 
-/** The minimum a connected Drive account has to expose to the form. */
-export interface GdriveAccount {
+function defaultValueFor(field: ProjectField): ProjectFieldValue {
+  if (field.control === "switch") {
+    return typeof field.defaultValue === "boolean" ? field.defaultValue : false;
+  }
+
+  return typeof field.defaultValue === "string" ? field.defaultValue : "";
+}
+
+/** Blank values for a kind's fields, used when the selection changes. */
+export function emptyFieldValues(kind: ProjectKind): Record<string, ProjectFieldValue> {
+  const values: Record<string, ProjectFieldValue> = {};
+
+  for (const field of kind.fields) {
+    values[field.name] = defaultValueFor(field);
+  }
+
+  return values;
+}
+
+/** The minimum a connected account has to expose to the form. */
+export interface ConnectedAccount {
   id: string;
+  type: string;
 }
 
 /**
- * Starting values for a kind. A gdrive source needs a connection id before the
- * Picker can mint a token, so it defaults to the first connected account; the
- * user can change it when there is more than one.
+ * Starting values for a kind.
+ *
+ * A `connection-account` field defaults to the first account the caller has for
+ * that provider — a Drive source needs a connection id before the Picker can
+ * mint a token, and a YouTube destination needs a channel before it can
+ * publish. With no account the value stays blank and the field explains what is
+ * missing.
  */
 export function initialFieldValues(
   kind: ProjectKind,
-  gdriveAccounts: readonly GdriveAccount[] = [],
-): Record<string, string> {
+  accounts: readonly ConnectedAccount[] = [],
+): Record<string, ProjectFieldValue> {
   const values = emptyFieldValues(kind);
-  const first = gdriveAccounts[0];
-  if (!first) return values;
 
   for (const field of kind.fields) {
-    if (field.control === "gdrive-account") values[field.name] = first.id;
+    if (field.control !== "connection-account" || !field.provider) continue;
+
+    const first = accounts.find((account) => account.type === field.provider);
+    values[field.name] = first?.id ?? "";
   }
 
   return values;
@@ -178,17 +541,22 @@ export function initialFieldValues(
 export interface ProjectDraftValues {
   inputType: string;
   outputType: string;
-  input: Record<string, string>;
-  output: Record<string, string>;
+  input: Record<string, ProjectFieldValue>;
+  output: Record<string, ProjectFieldValue>;
+  /**
+   * `true` asks the API to queue the project instead of leaving it a draft.
+   * Omitted means draft, which is also the API's default.
+   */
+  submit?: boolean;
 }
 
 function pickKnownFields(
   kind: ProjectKind | undefined,
-  values: Record<string, string>,
-): Record<string, string> {
-  const picked: Record<string, string> = {};
+  values: Record<string, ProjectFieldValue>,
+): Record<string, ProjectFieldValue> {
+  const picked: Record<string, ProjectFieldValue> = {};
   for (const field of kind?.fields ?? []) {
-    picked[field.name] = values[field.name] ?? "";
+    picked[field.name] = values[field.name] ?? defaultValueFor(field);
   }
   return picked;
 }
@@ -211,6 +579,8 @@ export function buildProjectDraft(values: ProjectDraftValues): unknown {
         values.output,
       ),
     },
+    // Always explicit: the two actions in the dialog differ only here.
+    submit: values.submit === true,
   };
 }
 
@@ -251,6 +621,7 @@ export function summarizeProjectInput(
  */
 const STATUS_LABELS: Record<string, string> = {
   draft: "Draft",
+  pending: "Pending",
   queued: "Queued",
   processing: "Processing",
   completed: "Completed",

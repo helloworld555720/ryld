@@ -34,6 +34,12 @@ function kindUnion(kinds: readonly ProjectKind[]): ZodType {
 export const projectCreateSchema = z.object({
   input: kindUnion(PROJECT_INPUT_KINDS),
   output: kindUnion(PROJECT_OUTPUT_KINDS),
+  /**
+   * Added upstream 2026-11-21: `true` queues the project (`status: "pending"`),
+   * `false` or omitted leaves `status: "draft"`. Always normalised to a boolean
+   * so the BFF forwards exactly one shape.
+   */
+  submit: z.boolean().optional().default(false),
 });
 
 /** `POST /jobs/` answers with the created project; verified 2026-11-17. */
@@ -48,6 +54,8 @@ export const projectSchema = z
       .catchall(z.unknown()),
     status: z.string().min(1),
     source: z.unknown().nullable().optional(),
+    /** Echoed by the API since 2026-11-21; older stored jobs may omit it. */
+    submit: z.boolean().optional(),
   })
   .catchall(z.unknown());
 
