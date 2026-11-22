@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { buildCsp, newNonce } from "@/lib/csp";
+import { buildCsp, mediaOriginOf, newNonce } from "@/lib/csp";
 
 /**
  * Optimistic, cookie-presence check only. It exists to avoid rendering the
@@ -26,7 +26,20 @@ function isProtected(pathname: string): boolean {
 
 export function proxy(request: NextRequest) {
   const nonce = newNonce();
-  const csp = buildCsp({ nonce, isDev: process.env.NODE_ENV === "development" });
+
+  const mediaOrigins = [
+    mediaOriginOf(process.env.MEDIA_BASE_URL),
+    mediaOriginOf(process.env.MEDIA_SEGMENT_BASE_URL),
+  ].filter((o): o is string => !!o);
+
+  const csp = buildCsp({
+    nonce,
+    isDev: process.env.NODE_ENV === "development",
+    // Read directly, not through `getServerEnv()`: proxy runs for every page,
+    // and a missing API_URL must not turn that into a 500 before the layout can
+    // render its own error.
+    mediaOrigins,
+  });
 
   const requestHeaders = new Headers(request.headers);
   // Next reads the nonce back out of the CSP request header and applies it to

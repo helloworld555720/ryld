@@ -36,4 +36,30 @@ describe("parseServerEnv", () => {
     const env = parseServerEnv({ ...valid, AUTH_SERVICE_URL: "http://localhost:8080///" });
     expect(env.AUTH_SERVICE_URL).toBe("http://localhost:8080");
   });
+
+  it("leaves MEDIA_BASE_URL undefined when it is unset or blank", () => {
+    expect(parseServerEnv(valid).MEDIA_BASE_URL).toBeUndefined();
+    expect(parseServerEnv({ ...valid, MEDIA_BASE_URL: "" }).MEDIA_BASE_URL).toBe(
+      undefined,
+    );
+    expect(
+      parseServerEnv({ ...valid, MEDIA_BASE_URL: "   " }).MEDIA_BASE_URL,
+    ).toBeUndefined();
+  });
+
+  it("normalises a configured MEDIA_BASE_URL like the other URLs", () => {
+    const env = parseServerEnv({
+      ...valid,
+      MEDIA_BASE_URL: "  https://media.example.com/bucket///  ",
+    });
+    expect(env.MEDIA_BASE_URL).toBe("https://media.example.com/bucket");
+  });
+
+  it("rejects a MEDIA_BASE_URL that is not an absolute http(s) URL", () => {
+    for (const value of ["media.example.com", "/bucket", "ftp://media.example.com"]) {
+      expect(() => parseServerEnv({ ...valid, MEDIA_BASE_URL: value }), value).toThrow(
+        /MEDIA_BASE_URL/,
+      );
+    }
+  });
 });

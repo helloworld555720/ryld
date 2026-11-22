@@ -231,6 +231,7 @@ rewrites `POST /api/backend/projects` → `POST /jobs/`. The trailing slash matt
 | --- | --- |
 | `POST /jobs/` | `201` with the created object: `{"input":{"url":"…","type":"youtube"},"output":{"type":"s3"},"submit":false,"id":"<uuid>","status":"draft","source":null}`. Missing or invalid body → `422 {"detail":"Invalid request"}` (a fixed message with no field detail) |
 | `GET /jobs/` | `200` with an array of the same shape |
+| `GET /jobs/{id}` | `200` with that one object; the trailing slash is optional (verified 2026-11-21). An unknown uuid → `404 {"detail":"Not Found"}` |
 | `DELETE /jobs/{id}` | `200 {"message":"Job deleted successfully"}` for a `draft`; `409 {"detail":"Job is not in 'draft' state"}` for anything already submitted (verified; not exposed by this app) |
 
 `GET /jobs/` is what `/projects` renders: one card per item, read server-side. The payload
@@ -288,6 +289,12 @@ payload; they differ only in `submit`.
 - The values are **storage keys relative to the output**, not URLs: no scheme, host or bucket,
   and `output` carries no bucket either. This app shows them verbatim and never builds links
   from them.
+- **No endpoint serves those keys.** `GET /jobs/{id}/source`, `/files`, `/output`, `/download`
+  and `/files/{key}` all answer `404`, `/openapi.json` is disabled, and nothing exposes the S3
+  bucket or CDN. The host therefore has to be configuration on our side: `MEDIA_BASE_URL`,
+  joined onto each key by `lib/media.ts`. It is **unverified** — no media host was reachable
+  from this environment, so the video page renders its "media host isn't configured" state
+  until a real value is supplied.
 - A project that fails while processing reports `status: "failed"` and `source: null`.
 - Submission stays irreversible after processing: `DELETE` on a `completed` or `failed`
   project answers the same `409 {"detail":"Job is not in 'draft' state"}` as `pending`. Only a

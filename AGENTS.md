@@ -38,6 +38,7 @@ talks to a database, and never runs better-auth's server.
 | Auth | `better-auth` **client only** (`better-auth/react`), against the auth service via same-origin proxy |
 | Auth screens | `better-auth-ui` via shadcn registry (`@better-auth-ui/auth`) |
 | Styling | Tailwind CSS v4 + shadcn/ui (Radix), dark mode **only** |
+| Video | Video.js v10 (`@videojs/react` + `@videojs/hlsjs-video`, hls.js engine) |
 | Server state | TanStack Query v5 (client) + RSC fetches (page load) |
 | Forms | react-hook-form + zod (v4) |
 | Validation | zod at every trust boundary (env, request params, upstream responses) |
@@ -100,6 +101,17 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
   only that `source` is `null` or an object with a non-empty `type`: an unknown kind renders no
   rows instead of failing the whole list. Failed projects keep `source: null`, and nothing but
   a `draft` can be deleted (`409` after submission).
+- **A project has its own page and a player.** A card is a link to `/projects/[id]`, which
+  reads `GET /jobs/{id}` server-side (`getProject` in `lib/api/projects.ts`, `404` →
+  `notFound()`) and renders the result with Video.js v10: `VideoPlayer` + `VideoSkin` from
+  `@videojs/react/video` and `HlsJsVideo` from `@videojs/react/media/hlsjs-video`, with the
+  storyboard, captions and chapters as `<track>` elements. `source` carries storage **keys**,
+  not URLs, and no upstream endpoint serves them, so `MEDIA_BASE_URL` (server env, optional)
+  is joined onto each key by `lib/media.ts`; the page passes absolute URLs down and the
+  player never builds one. Draft/pending/failed projects, and a completed one with no playable
+  result, render a status notice instead of a dead `<video>`. The CSP gains exactly that one
+  origin in `img-src`/`media-src`/`connect-src` when it is configured, and keeps
+  `media-src blob:`/`worker-src blob:` for MSE and hls.js.
 - **The projects page lists them as cards.** `GET /jobs/` is read server-side
   (`lib/api/projects.ts`, no hop through our own BFF) and rendered by
   `components/app/project-card.tsx`. The card is registry-driven like the form: the title,
@@ -143,6 +155,7 @@ app/
   (app)/                   authenticated area: layout guard + shell
     api-token/             developer token page (explicit JWT exception, see §5.2)
     projects/              project list (cards) + creation dialog
+    projects/[id]/         one project: Video.js player or status notice, details
   connections/complete/    popup completion page: messages the opener, closes
   api/auth/[...all]/       auth proxy route handler
   api/backend/[...path]/   BFF proxy, allowlist-only
@@ -152,7 +165,8 @@ components/
   ui/                      shadcn primitives (generated, don't hand-edit upstream files)
   app/                     shell, nav, page-header, empty/error states,
                            create-project-dialog, create-project-form,
-                           project-card, google-drive-file-picker
+                           project-card, project-status-badge,
+                           project-video-player, google-drive-file-picker
   auth/                    better-auth-ui components (generated)
   providers.tsx            QueryClient + AuthProvider (client boundary)
 lib/
@@ -166,6 +180,8 @@ lib/
   api/projects.ts          RSC read of the caller's projects (upstream `/jobs/`)
   api/schemas/             zod schemas for upstream payloads
   projects.ts              input/output registries, field controls, draft builder
+                           (client-safe)
+  media.ts                 storage key → absolute media URL, playable result shape
                            (client-safe)
   connections.ts           provider + category registry, grouping helpers
   env.ts                   zod-validated env, server/public split
@@ -242,6 +258,9 @@ docs/
     nonce policy: a static page under `script-src 'nonce-…'` would ship scripts that the
     browser refuses to run. `style-src` keeps `'unsafe-inline'` because nonces do not cover
     Radix `style` attributes — never add `'unsafe-inline'` to `script-src` instead.
+    The player's origin is the one other allowed host: `MEDIA_BASE_URL`'s origin is added to
+    `img-src`, `media-src` and `connect-src` when it is configured, exactly one origin, never
+    `https:`. `media-src blob:` and `worker-src blob:` stay because MSE and hls.js need them.
 
 ## 6. Conventions
 
@@ -270,12 +289,17 @@ docs/
 # server-only
 AUTH_SERVICE_URL=https://auth.example.com   # no trailing slash
 API_URL=https://api.example.com             # no trailing slash
+MEDIA_BASE_URL=https://media.example.com    # optional: bucket/CDN in front of
+                                            # project output; no trailing slash
 # public
 NEXT_PUBLIC_APP_NAME=Ryld
 ```
 
 `lib/env.ts` validates lazily on first use (so `next build` doesn't need runtime config)
-and throws on missing/malformed values. Local dev points at `http://localhost:8080` for
+and throws on missing/malformed values. `MEDIA_BASE_URL` is the one optional key: unset or
+blank means "playback not configured", and the project page says so rather than rendering a
+player that cannot load anything. `proxy.ts` reads it straight from `process.env` for the CSP
+so a missing `API_URL` cannot 500 every page. Local dev points at `http://localhost:8080` for
 auth (verified reachable, `basePath=/api/auth`) and `http://localhost:8000` for the API
 (verified 2026-11-14: FastAPI/uvicorn, `/openapi.json` disabled). `.env.example` is
 committed; `.env*` is not.
@@ -601,6 +625,23 @@ those files; re-run the CLI instead.
   kind renders no rows. The same probe showed `failed` is a terminal status too, and that a
   `completed` or `failed` project answers `409` to `DELETE` just like `pending` — only `draft`
   is deletable, so the two earlier probe projects still cannot be removed.
+- **2026-11-21** — Added a **project page with a Video.js v10 player** (owner request). A card
+  is now a link to `/projects/[id]`; the page reads `GET /jobs/{id}` server-side (verified: the
+  trailing slash is optional, an unknown uuid is `404`), renders `VideoPlayer` + `VideoSkin`
+  from `@videojs/react@10.6.0` around `HlsJsVideo` from `@videojs/react/media/hlsjs-video`,
+  and keeps the details rows below it. Storyboard/captions/chapters become `<track>`
+  elements, each optional because each artefact in `source` is. The player takes absolute
+  URLs: `lib/media.ts` joins the stored keys onto `MEDIA_BASE_URL`, an optional server env key
+  (`lib/env.ts`), so the browser never guesses a bucket. Unset means the page explains that
+  the media host isn't configured — no media host was reachable from this environment, so
+  **playback is unverified** while the wiring is (hls.js requested the manifest, the poster and
+  all three tracks, and CSP carried exactly the configured origin). **Do not put the player in
+  `<Suspense>`**: rendering the sketch's fallback produced a `hidden` div whose streaming
+  completion never completed, leaving a 0×0, un-hydrated skin while hls.js still fetched the
+  manifest. Rendering it directly server-renders and hydrates the full control bar
+  (play, seek, mute, captions, cast, fullscreen). Two smaller choices: the whole card is the
+  link (nothing inside it is separately interactive), and the status badge moved to
+  `project-status-badge.tsx` so the card and page style `completed`/`failed` the same way.
 
 ## 11. Deferred / follow-ups
 

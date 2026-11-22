@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildCsp, newNonce } from "@/lib/csp";
+import { buildCsp, mediaOriginOf, newNonce } from "@/lib/csp";
 
 function directive(csp: string, name: string): string {
   const found = csp
@@ -47,6 +47,34 @@ describe("buildCsp", () => {
     expect(origins).toEqual(["https://docs.google.com"]);
   });
 
+  it("keeps playback off the policy until a media host exists", () => {
+    expect(directive(prod, "media-src")).toBe("media-src 'self' blob:");
+    expect(directive(prod, "img-src")).not.toContain("http");
+  });
+
+  it("allows exactly the configured media origin for playback", () => {
+    const withMedia = buildCsp({
+      nonce: "abc123",
+      isDev: false,
+      mediaOrigins: ["https://media.example.com"],
+    });
+
+    for (const name of ["img-src", "media-src", "connect-src"]) {
+      expect(directive(withMedia, name), name).toContain(
+        "https://media.example.com",
+      );
+    }
+
+    // MSE and hls.js need blob: media and a blob worker.
+    expect(directive(withMedia, "media-src")).toContain("blob:");
+    expect(directive(withMedia, "worker-src")).toContain("blob:");
+
+    const origins = withMedia.match(/https?:\/\/[^\s;]+/g) ?? [];
+    expect(new Set(origins)).toEqual(
+      new Set(["https://docs.google.com", "https://media.example.com"]),
+    );
+  });
+
   it("blocks framing, objects, and base/form hijacking", () => {
     expect(directive(prod, "frame-ancestors")).toContain("'none'");
     expect(directive(prod, "object-src")).toContain("'none'");
@@ -67,6 +95,24 @@ describe("buildCsp", () => {
   it("does not leave empty directives", () => {
     expect(prod).not.toMatch(/;\s*;/);
     expect(prod.endsWith(";")).toBe(false);
+  });
+});
+
+describe("mediaOriginOf", () => {
+  it("reduces a configured base to its origin", () => {
+    expect(mediaOriginOf("https://media.example.com/bucket")).toBe(
+      "https://media.example.com",
+    );
+    expect(mediaOriginOf("http://localhost:9000/ryld")).toBe(
+      "http://localhost:9000",
+    );
+  });
+
+  it("returns null for nothing usable, so the policy gains no origin", () => {
+    expect(mediaOriginOf(undefined)).toBeNull();
+    expect(mediaOriginOf("")).toBeNull();
+    expect(mediaOriginOf("media.example.com")).toBeNull();
+    expect(mediaOriginOf("ftp://media.example.com")).toBeNull();
   });
 });
 

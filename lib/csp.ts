@@ -8,6 +8,25 @@
 export interface CspOptions {
   nonce: string;
   isDev: boolean;
+  /**
+   * Origin of the host that fronts project output (`MEDIA_BASE_URL`), when one
+   * is configured. The player fetches manifests and segments from it cross-
+   * origin, so it has to be allowed explicitly — never widened to `https:`.
+   */
+  mediaOrigins?: string[]; // was: mediaOrigin?: string | null
+}
+
+/** `https://cdn.example.com` from a configured base, or `null` when unusable. */
+export function mediaOriginOf(base: string | undefined): string | null {
+  if (!base) return null;
+
+  try {
+    const url = new URL(base);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -19,7 +38,13 @@ export function newNonce(): string {
   return Buffer.from(crypto.randomUUID()).toString("base64");
 }
 
-export function buildCsp({ nonce, isDev }: CspOptions): string {
+export function buildCsp({ nonce, isDev, mediaOrigins = [] }: CspOptions): string {
+  // Empty when playback is not configured, so the policy stays as narrow as it
+  // can be and gains one origin per configured media host.
+  const media = mediaOrigins.length
+    ? ` ${[...new Set(mediaOrigins)].join(" ")}`
+    : "";
+
   const directives = [
     "default-src 'self'",
 
@@ -43,11 +68,15 @@ export function buildCsp({ nonce, isDev }: CspOptions): string {
     // script injection, which stays nonce-locked above.
     "style-src 'self' 'unsafe-inline'",
 
-    "img-src 'self' blob: data:",
+    // The poster is a cross-origin image when the media host is configured.
+    `img-src 'self' blob: data:${media}`,
     "font-src 'self' data:",
-    // The browser only ever talks to this origin (auth proxy + BFF). Dev needs
-    // the HMR websocket.
-    `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
+    // The player fetches the HLS manifest, segments and text tracks from the
+    // media host, and MSE moves the video into a blob: URL.
+    `media-src 'self' blob:${media}`,
+    // The browser only ever talks to this origin (auth proxy + BFF), plus the
+    // media host for playback. Dev needs the HMR websocket.
+    `connect-src 'self'${isDev ? " ws: wss:" : ""}${media}`,
 
     // The Google Picker dialog renders in an iframe hosted on docs.google.com.
     // Nothing else may be framed; the Picker script itself is loaded through a
