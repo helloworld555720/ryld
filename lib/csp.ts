@@ -9,11 +9,12 @@ export interface CspOptions {
   nonce: string;
   isDev: boolean;
   /**
-   * Origin of the host that fronts project output (`MEDIA_BASE_URL`), when one
-   * is configured. The player fetches manifests and segments from it cross-
-   * origin, so it has to be allowed explicitly — never widened to `https:`.
+   * Origins of the hosts that front project output — `MEDIA_BASE_URL` for the
+   * manifest, poster and text tracks, `MEDIA_SEGMENT_BASE_URL` for the HLS
+   * media segments. The player fetches both cross-origin, so each has to be
+   * allowed explicitly — never widened to `https:`.
    */
-  mediaOrigins?: string[]; // was: mediaOrigin?: string | null
+  mediaOrigins?: string[];
 }
 
 /** `https://cdn.example.com` from a configured base, or `null` when unusable. */
@@ -72,7 +73,7 @@ export function buildCsp({ nonce, isDev, mediaOrigins = [] }: CspOptions): strin
     `img-src 'self' blob: data:${media}`,
     "font-src 'self' data:",
     // The player fetches the HLS manifest, segments and text tracks from the
-    // media host, and MSE moves the video into a blob: URL.
+    // media hosts, and MSE moves the video into a blob: URL.
     `media-src 'self' blob:${media}`,
     // The browser only ever talks to this origin (auth proxy + BFF), plus the
     // media host for playback. Dev needs the HMR websocket.

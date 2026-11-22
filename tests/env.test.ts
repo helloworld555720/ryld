@@ -62,4 +62,27 @@ describe("parseServerEnv", () => {
       );
     }
   });
+
+  it("treats MEDIA_SEGMENT_BASE_URL the same way", () => {
+    expect(parseServerEnv(valid).MEDIA_SEGMENT_BASE_URL).toBeUndefined();
+    expect(
+      parseServerEnv({ ...valid, MEDIA_SEGMENT_BASE_URL: "  " })
+        .MEDIA_SEGMENT_BASE_URL,
+    ).toBeUndefined();
+    expect(
+      parseServerEnv({
+        ...valid,
+        MEDIA_SEGMENT_BASE_URL: "https://segments.example.com/hls///",
+      }).MEDIA_SEGMENT_BASE_URL,
+    ).toBe("https://segments.example.com/hls");
+  });
+
+  it("rejects a malformed MEDIA_SEGMENT_BASE_URL", () => {
+    for (const value of ["segments.example.com", "ftp://segments.example.com"]) {
+      expect(
+        () => parseServerEnv({ ...valid, MEDIA_SEGMENT_BASE_URL: value }),
+        value,
+      ).toThrow(/MEDIA_SEGMENT_BASE_URL/);
+    }
+  });
 });

@@ -13,6 +13,7 @@ import { buildCsp, mediaOriginOf, newNonce } from "@/lib/csp";
  */
 const PROTECTED_PREFIXES = [
   "/home",
+  "/projects",
   "/connections",
   "/api-token",
   "/dashboard",
@@ -27,6 +28,8 @@ function isProtected(pathname: string): boolean {
 export function proxy(request: NextRequest) {
   const nonce = newNonce();
 
+  // Manifests/posters/tracks may live on one host and the media segments on
+  // another; both origins join the policy, and `buildCsp` dedupes them.
   const mediaOrigins = [
     mediaOriginOf(process.env.MEDIA_BASE_URL),
     mediaOriginOf(process.env.MEDIA_SEGMENT_BASE_URL),

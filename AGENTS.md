@@ -113,10 +113,12 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
   storyboard, captions and chapters as `<track>` elements. `source` carries storage **keys**,
   not URLs, and no upstream endpoint serves them, so `MEDIA_BASE_URL` (server env, optional)
   is joined onto each key by `lib/media.ts`; the page passes absolute URLs down and the
-  player never builds one. Draft/pending/failed projects, and a completed one with no playable
-  result, render a status notice instead of a dead `<video>`. The CSP gains exactly that one
-  origin in `img-src`/`media-src`/`connect-src` when it is configured, and keeps
-  `media-src blob:`/`worker-src blob:` for MSE and hls.js.
+  player never builds one. When manifests and HLS segments sit on different origins,
+  `MEDIA_SEGMENT_BASE_URL` (also optional) adds the second origin to the CSP — it never
+  rewrites URLs, so the playlist must already point at that host. Draft/pending/failed
+  projects, and a completed one with no playable result, render a status notice instead of a
+  dead `<video>`. The CSP gains exactly those origins in `img-src`/`media-src`/`connect-src`
+  when configured, and keeps `media-src blob:`/`worker-src blob:` for MSE and hls.js.
 - **The projects page lists them as cards.** `GET /jobs/` is read server-side
   (`lib/api/projects.ts`, no hop through our own BFF) and rendered by
   `components/app/project-card.tsx`. The card is registry-driven like the form: the title,
@@ -263,8 +265,9 @@ docs/
     nonce policy: a static page under `script-src 'nonce-…'` would ship scripts that the
     browser refuses to run. `style-src` keeps `'unsafe-inline'` because nonces do not cover
     Radix `style` attributes — never add `'unsafe-inline'` to `script-src` instead.
-    The player's origin is the one other allowed host: `MEDIA_BASE_URL`'s origin is added to
-    `img-src`, `media-src` and `connect-src` when it is configured, exactly one origin, never
+    The player's origins are the only other allowed hosts: `MEDIA_BASE_URL` and
+    `MEDIA_SEGMENT_BASE_URL` are each reduced to an origin and added to `img-src`,
+    `media-src` and `connect-src` when configured — exactly those origins, deduped, never
     `https:`. `media-src blob:` and `worker-src blob:` stay because MSE and hls.js need them.
 
 ## 6. Conventions
@@ -296,18 +299,23 @@ AUTH_SERVICE_URL=https://auth.example.com   # no trailing slash
 API_URL=https://api.example.com             # no trailing slash
 MEDIA_BASE_URL=https://media.example.com    # optional: bucket/CDN in front of
                                             # project output; no trailing slash
+MEDIA_SEGMENT_BASE_URL=https://segments.example.com  # optional: second host for
+                                            # HLS segments; CSP only, no rewriting
 # public
 NEXT_PUBLIC_APP_NAME=Ryld
 ```
 
 `lib/env.ts` validates lazily on first use (so `next build` doesn't need runtime config)
-and throws on missing/malformed values. `MEDIA_BASE_URL` is the one optional key: unset or
-blank means "playback not configured", and the project page says so rather than rendering a
-player that cannot load anything. `proxy.ts` reads it straight from `process.env` for the CSP
-so a missing `API_URL` cannot 500 every page. Local dev points at `http://localhost:8080` for
-auth (verified reachable, `basePath=/api/auth`) and `http://localhost:8000` for the API
-(verified 2026-11-14: FastAPI/uvicorn, `/openapi.json` disabled). `.env.example` is
-committed; `.env*` is not and is never read by an agent (§0).
+and throws on missing/malformed values. `MEDIA_BASE_URL` and `MEDIA_SEGMENT_BASE_URL` are the
+optional keys: unset or blank means "playback not configured" (the second one is unset in the
+normal single-origin case), and the project page says so rather than rendering a player that
+cannot load anything. `proxy.ts` reads both straight from `process.env` for the CSP so a
+missing `API_URL` cannot 500 every page; a malformed value there is simply not added to the
+policy, while `lib/env.ts` still rejects it on the page's own read. Local dev points at
+`http://localhost:8080` for auth (verified reachable, `basePath=/api/auth`) and
+`http://localhost:8000` for the API (verified 2026-11-14: FastAPI/uvicorn,
+`/openapi.json` disabled). `.env.example` is committed; `.env*` is not and is never read by an
+agent (§0).
 
 **Dev gotcha to verify (T0.1):** if the auth service sets `__Secure-`-prefixed cookies
 because it believes it is on HTTPS, those cookies are dropped by an `http://localhost`
@@ -652,6 +660,14 @@ those files; re-run the CLI instead.
   one puts them in a transcript, a command line or a commit with no benefit: the contract
   is already written down. The rule sits in §0, `.env.example` is the only env file an agent
   may read or edit, and when a task needs a real value the owner sets it.
+- **2026-11-22** — HLS segments may come from a **different origin** than the manifest, so
+  `MEDIA_SEGMENT_BASE_URL` joins `MEDIA_BASE_URL` as an optional server key. It is a CSP
+  input only: `proxy.ts` reduces both to origins, `buildCsp` dedupes them into
+  `img-src`/`media-src`/`connect-src`, and nothing rewrites a URL — hls.js resolves the
+  playlist's own segment URIs, so the manifest must already point at the segment host.
+  `lib/env.ts` validates the key like `MEDIA_BASE_URL` (absolute http(s), no trailing slash);
+  a value that only `proxy.ts` sees and `lib/env.ts` rejects fails the page read rather than
+  silently producing a policy that blocks the segments.
 
 ## 11. Deferred / follow-ups
 

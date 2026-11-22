@@ -75,6 +75,45 @@ describe("buildCsp", () => {
     );
   });
 
+  it("allows a separate segment origin for playback", () => {
+    const both = buildCsp({
+      nonce: "abc123",
+      isDev: false,
+      mediaOrigins: ["https://media.example.com", "https://segments.example.com"],
+    });
+
+    for (const name of ["media-src", "connect-src"]) {
+      expect(directive(both, name), name).toContain("https://media.example.com");
+      expect(directive(both, name), name).toContain(
+        "https://segments.example.com",
+      );
+    }
+
+    const origins = both.match(/https?:\/\/[^\s;]+/g) ?? [];
+    expect(new Set(origins)).toEqual(
+      new Set([
+        "https://docs.google.com",
+        "https://media.example.com",
+        "https://segments.example.com",
+      ]),
+    );
+  });
+
+  it("does not repeat an origin configured for both hosts", () => {
+    const same = buildCsp({
+      nonce: "abc123",
+      isDev: false,
+      mediaOrigins: [
+        "https://media.example.com",
+        "https://media.example.com",
+      ],
+    });
+
+    expect(directive(same, "connect-src")).toBe(
+      "connect-src 'self' https://media.example.com",
+    );
+  });
+
   it("blocks framing, objects, and base/form hijacking", () => {
     expect(directive(prod, "frame-ancestors")).toContain("'none'");
     expect(directive(prod, "object-src")).toContain("'none'");

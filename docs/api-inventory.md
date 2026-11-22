@@ -292,9 +292,11 @@ payload; they differ only in `submit`.
 - **No endpoint serves those keys.** `GET /jobs/{id}/source`, `/files`, `/output`, `/download`
   and `/files/{key}` all answer `404`, `/openapi.json` is disabled, and nothing exposes the S3
   bucket or CDN. The host therefore has to be configuration on our side: `MEDIA_BASE_URL`,
-  joined onto each key by `lib/media.ts`. It is **unverified** — no media host was reachable
-  from this environment, so the video page renders its "media host isn't configured" state
-  until a real value is supplied.
+  joined onto each key by `lib/media.ts`. When the HLS segments are served from a different
+  origin, `MEDIA_SEGMENT_BASE_URL` adds that origin to the CSP; it is not joined onto
+  anything, so the playlist itself must already reference the segment host. Both are
+  **unverified** — no media host was reachable from this environment, so the video page
+  renders its "media host isn't configured" state until a real value is supplied.
 - A project that fails while processing reports `status: "failed"` and `source: null`.
 - Submission stays irreversible after processing: `DELETE` on a `completed` or `failed`
   project answers the same `409 {"detail":"Job is not in 'draft' state"}` as `pending`. Only a
