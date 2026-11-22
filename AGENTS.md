@@ -14,6 +14,11 @@ write, edit, delete and command must resolve inside this directory.
   installs or edits to globally installed tooling.
 - Harness-managed scratch space (screenshots, command output) is the only exception, and it
   is write-only scratch: never use it to change files outside this repository.
+- **Never read the env files.** `.env`, `.env.local` and every other `.env*` variant hold
+  live credentials, so an agent must not open, print, cat, grep, diff or copy one. The
+  documented shape is `.env.example`, which is the only env file an agent may read or edit.
+  Learn what the app needs from `lib/env.ts` and the env contract in §7; if a task truly
+  needs a value, ask the owner to set it rather than reading the file.
 - If a task appears to require crossing this boundary, stop and ask instead of proceeding.
 
 ## 1. What this is
@@ -217,7 +222,7 @@ docs/
    click handler's local scope only, `no-store`, and never logged, stored, or put in a URL.
    It is not our JWT and grants nothing else in this app.
 3. `API_URL` and `AUTH_SERVICE_URL` are server-only. No secret in `NEXT_PUBLIC_*`.
-   Server modules import `server-only`.
+   Server modules import `server-only`. Agents never read or print a `.env*` file (§0).
 4. **The BFF is deny-by-default.** A request is forwarded only if `method + path` matches
    a registered entry in `lib/api/endpoints.ts`. No blind catch-all passthrough — that is
    an open proxy / SSRF with the user's token attached.
@@ -302,7 +307,7 @@ player that cannot load anything. `proxy.ts` reads it straight from `process.env
 so a missing `API_URL` cannot 500 every page. Local dev points at `http://localhost:8080` for
 auth (verified reachable, `basePath=/api/auth`) and `http://localhost:8000` for the API
 (verified 2026-11-14: FastAPI/uvicorn, `/openapi.json` disabled). `.env.example` is
-committed; `.env*` is not.
+committed; `.env*` is not and is never read by an agent (§0).
 
 **Dev gotcha to verify (T0.1):** if the auth service sets `__Secure-`-prefixed cookies
 because it believes it is on HTTPS, those cookies are dropped by an `http://localhost`
@@ -642,6 +647,11 @@ those files; re-run the CLI instead.
   (play, seek, mute, captions, cast, fullscreen). Two smaller choices: the whole card is the
   link (nothing inside it is separately interactive), and the status badge moved to
   `project-status-badge.tsx` so the card and page style `completed`/`failed` the same way.
+- **2026-11-22** — Agents must not read the env files. `.env`, `.env.local` and every other
+  `.env*` variant hold live credentials (upstream URLs and any future secret), and reading
+  one puts them in a transcript, a command line or a commit with no benefit: the contract
+  is already written down. The rule sits in §0, `.env.example` is the only env file an agent
+  may read or edit, and when a task needs a real value the owner sets it.
 
 ## 11. Deferred / follow-ups
 
