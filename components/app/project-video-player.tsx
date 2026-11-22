@@ -34,8 +34,9 @@ export interface ProjectVideoPlayerProps {
  * the skin rendered at 0×0 with no React fiber attached — invisible and inert,
  * even though hls.js still requested the manifest. Rendering the player
  * directly server-renders it, hydrates it (controls, cast, captions, fullscreen
- * all present) and leaves no skeleton to flash. It is a client component that
- * renders synchronously, so it has nothing to suspend on.
+ * all present) and leaves no skeleton to flash. This wrapper is a Server
+ * Component; the Video.js tree it renders is client code that has nothing to
+ * suspend on, so it renders synchronously and is hydrated in place.
  */
 export function ProjectVideoPlayer({ media }: ProjectVideoPlayerProps) {
   return (
