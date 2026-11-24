@@ -1,3 +1,6 @@
+import type { Project } from "@/lib/api/schemas/projects";
+import { projectStatusLabel } from "@/lib/projects";
+
 /**
  * Where a project's output actually lives.
  *
@@ -83,4 +86,48 @@ export function projectMedia(
     captions: optionalField(base, source, "captions"),
     chapters: optionalField(base, source, "chapters"),
   };
+}
+
+/**
+ * Why there is no playable result, in the caller's terms.
+ *
+ * Shared by the project page and the editor so both explain the same state the
+ * same way. Every branch says what the project is doing and what would make a
+ * video appear, rather than leaving a dead `<video>` for the viewer to press.
+ */
+export function playbackNotice(
+  project: Project,
+  mediaBase: string | undefined,
+): string {
+  const status = project.status.toLowerCase();
+
+  if (status === "draft") {
+    return "This project is a draft. Submit it to start processing; the video appears here when it finishes.";
+  }
+
+  if (status === "pending" || status === "queued" || status === "processing") {
+    return `This project is ${projectStatusLabel(project.status).toLowerCase()}. Reload the page to check again; the video appears here when processing finishes.`;
+  }
+
+  if (status === "failed") {
+    return "Processing failed, so there is no video to play. The details below are everything the API recorded.";
+  }
+
+  if (!project.source) {
+    return "This project finished without a result to play.";
+  }
+
+  if (project.source.type !== "hls") {
+    return "This result isn't a video this app can play.";
+  }
+
+  if (!mediaBase) {
+    /*
+     * The API reports storage keys, never URLs, so playback needs the host in
+     * front of the bucket. Saying so beats a silent failure inside the player.
+     */
+    return "The media host isn't configured, so the generated files can't be loaded yet. Set MEDIA_BASE_URL to the bucket or CDN in front of this project's output.";
+  }
+
+  return "This result has no playlist, so there is nothing to play.";
 }

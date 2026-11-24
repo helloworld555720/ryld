@@ -152,6 +152,19 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
   the options under `Details`, `Playback` and `Audience` from each field's `group`, and lays
   them out in a two-column grid where `fieldLayout()` (or a field's `layout`) decides full or
   half width. S3 stays the default destination; YouTube is second.
+- **The editor is a UI-only surface at `/projects/[id]/editor`.** It lives in its own
+  `(editor)` route group because the reference is a full-window tool: no sidebar, no page
+  padding, the timeline owns the bottom of the viewport. It reuses the project page's read
+  (`getProject`) and `projectMedia()`; draft/pending/failed projects and an unconfigured media
+  host get the same `playbackNotice()` copy instead of an editor. `lib/editor.ts` is the
+  timeline model: `tracks[]` of `{ id, type: "video" | "audio", muted, hidden, clips[] }` with
+  clips `{ id, trackId, start, duration, sourceOffset }` in **seconds**, plus pure
+  `timeToPixels`/`pixelsToTime`/`formatTimecode` helpers. Nothing renders, exports or edits the
+  media: one track holds one clip spanning the duration, and the only real playback is the
+  project's HLS in the preview. Preview and playhead share the same Video.js store
+  (`usePlayer`), so play moves the playhead and dragging the playhead seeks the preview; mute
+  is a `muted` prop on the media element (the store throws `NO_TARGET` before the media
+  attaches), and hide swaps the picture for a "Video hidden" overlay without pausing audio.
 - No refresh tokens, no token storage, no client secret.
 
 ## 4. Repo layout
@@ -163,6 +176,8 @@ app/
     api-token/             developer token page (explicit JWT exception, see §5.2)
     projects/              project list (cards) + creation dialog
     projects/[id]/         one project: Video.js player or status notice, details
+  (editor)/                full-window area: layout guard, no app shell
+    projects/[id]/editor/  preview + timeline editor (loader + notice states)
   connections/complete/    popup completion page: messages the opener, closes
   api/auth/[...all]/       auth proxy route handler
   api/backend/[...path]/   BFF proxy, allowlist-only
@@ -174,6 +189,8 @@ components/
                            create-project-dialog, create-project-form,
                            project-card, project-status-badge,
                            project-video-player, google-drive-file-picker
+  editor/                  video-editor (store + layout), editor-preview,
+                           editor-timeline (ruler, playhead, track headers)
   auth/                    better-auth-ui components (generated)
   providers.tsx            QueryClient + AuthProvider (client boundary)
 lib/
@@ -188,6 +205,8 @@ lib/
   api/schemas/             zod schemas for upstream payloads
   projects.ts              input/output registries, field controls, draft builder
                            (client-safe)
+  editor.ts                timeline model (tracks/clips, time), timecode and
+                           pixel/time conversion (client-safe)
   media.ts                 storage key → absolute media URL, playable result shape
                            (client-safe)
   connections.ts           provider + category registry, grouping helpers
@@ -668,6 +687,23 @@ those files; re-run the CLI instead.
   `lib/env.ts` validates the key like `MEDIA_BASE_URL` (absolute http(s), no trailing slash);
   a value that only `proxy.ts` sees and `lib/env.ts` rejects fails the page read rather than
   silently producing a policy that blocks the segments.
+- **2026-11-24** — Added the **UI-only editor** at `/projects/[id]/editor` (see §3), linked from
+  the project page's "Open in editor" action. One store, not two: `VideoPlayer` from
+  `@videojs/react/video` wraps the whole editor, the preview renders `Container` + `HlsJsVideo`,
+  and the timeline reads `currentTime` / calls `seek()` on the same store, so there is no
+  second clock to drift. No new dependency. Two implementation notes that cost time and should
+  not be relearned: (1) a store action such as `setMuted()` throws `NO_TARGET` if it runs before
+  the media attaches, so track mute is a `muted` prop on `HlsJsVideo` and the element's own
+  `volumechange` is the source of truth; (2) **`min-w-0` on the timeline section is
+  load-bearing** — the lane is as wide as the clip at the current zoom (~15 000 px for four
+  minutes at 56 px/s), and as a grid item it otherwise sets the editor's implicit column to its
+  min-content: the page grows to thousands of pixels, the inspector is pushed off-screen, and
+  the preview's `object-contain` picture lands outside the viewport (black picture, audio only —
+  the reported bug, visible only after metadata gives the clip its duration). A simulated DOM
+  with a 15 000 px lane reproduced it exactly and the class fixed it. The preview zoom select
+  sits in the panel header, not the control bar, because Radix portals its menu to `body` and
+  that portal would be invisible inside a fullscreen `Container`; `Save`/export, clip editing
+  and asset import remain out of scope.
 
 ## 11. Deferred / follow-ups
 

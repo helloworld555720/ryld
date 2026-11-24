@@ -1,4 +1,4 @@
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Clapperboard } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
@@ -6,17 +6,21 @@ import { z } from "zod";
 import { PageHeader } from "@/components/app/page-header";
 import { ProjectStatusBadge } from "@/components/app/project-status-badge";
 import { ProjectVideoPlayer } from "@/components/app/project-video-player";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getProject } from "@/lib/api/projects";
 import type { Project } from "@/lib/api/schemas/projects";
 import { getServerEnv } from "@/lib/env";
 import { isApiError } from "@/lib/errors";
 import { log } from "@/lib/log";
-import { projectMedia, sourceTitle } from "@/lib/media";
+import {
+  playbackNotice,
+  projectMedia,
+  sourceTitle,
+} from "@/lib/media";
 import {
   getProjectInputKind,
   getProjectOutputKind,
-  projectStatusLabel,
   summarizeProjectInput,
   summarizeProjectSource,
 } from "@/lib/projects";
@@ -29,45 +33,6 @@ import {
 export const instant = false;
 
 const projectIdSchema = z.uuid();
-
-/**
- * Why there is no player, in the caller's terms. Every branch says what the
- * project is doing and what would make a video appear, rather than showing a
- * dead `<video>` the viewer would try to press.
- */
-function noPlayerNotice(project: Project, mediaBase: string | undefined): string {
-  const status = project.status.toLowerCase();
-
-  if (status === "draft") {
-    return "This project is a draft. Submit it to start processing; the video appears here when it finishes.";
-  }
-
-  if (status === "pending" || status === "queued" || status === "processing") {
-    return `This project is ${projectStatusLabel(project.status).toLowerCase()}. Reload the page to check again; the video appears here when processing finishes.`;
-  }
-
-  if (status === "failed") {
-    return "Processing failed, so there is no video to play. The details below are everything the API recorded.";
-  }
-
-  if (!project.source) {
-    return "This project finished without a result to play.";
-  }
-
-  if (project.source.type !== "hls") {
-    return "This result isn't a video this app can play.";
-  }
-
-  if (!mediaBase) {
-    /*
-     * The API reports storage keys, never URLs, so playback needs the host in
-     * front of the bucket. Saying so beats a silent failure inside the player.
-     */
-    return "The media host isn't configured, so the generated files can't be loaded yet. Set MEDIA_BASE_URL to the bucket or CDN in front of this project's output.";
-  }
-
-  return "This result has no playlist, so there is nothing to play.";
-}
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
@@ -144,7 +109,17 @@ export default async function ProjectPage({
         eyebrow="Project"
         title={title}
         description={description}
-        actions={<ProjectStatusBadge status={project.status} />}
+        actions={
+          <>
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/projects/${project.id}/editor`}>
+                <Clapperboard className="size-4" aria-hidden="true" />
+                Open in editor
+              </Link>
+            </Button>
+            <ProjectStatusBadge status={project.status} />
+          </>
+        }
       />
 
       {media ? (
@@ -153,7 +128,7 @@ export default async function ProjectPage({
         <Card>
           <CardContent className="py-2">
             <p className="text-muted-foreground max-w-prose text-sm">
-              {noPlayerNotice(project, mediaBase)}
+              {playbackNotice(project, mediaBase)}
             </p>
           </CardContent>
         </Card>
