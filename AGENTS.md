@@ -158,13 +158,22 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
   (`getProject`) and `projectMedia()`; draft/pending/failed projects and an unconfigured media
   host get the same `playbackNotice()` copy instead of an editor. `lib/editor.ts` is the
   timeline model: `tracks[]` of `{ id, type: "video" | "audio", muted, hidden, clips[] }` with
-  clips `{ id, trackId, start, duration, sourceOffset }` in **seconds**, plus pure
-  `timeToPixels`/`pixelsToTime`/`formatTimecode` helpers. Nothing renders, exports or edits the
-  media: one track holds one clip spanning the duration, and the only real playback is the
-  project's HLS in the preview. Preview and playhead share the same Video.js store
-  (`usePlayer`), so play moves the playhead and dragging the playhead seeks the preview; mute
-  is a `muted` prop on the media element (the store throws `NO_TARGET` before the media
-  attaches), and hide swaps the picture for a "Video hidden" overlay without pausing audio.
+  clips `{ id, trackId, start, duration, sourceOffset }` in **seconds** and nothing in pixels.
+  `lib/timeline.ts` is the pure viewport layer: `{ level, scrollX }`, `basePxPerSec`
+  (`viewportWidth / 3 / duration`, computed once when the duration is known), `timeToX`/
+  `xToTime`, `maxLevelFor` (a fixed 200px frame stop), `maxScrollFor` (the end margin) and the
+  ruler's tick selection. Zoom is anchored on the playhead and the resulting scroll is clamped,
+  so a playhead at 0 never moves and one at the end is pushed back from the right edge instead
+  of overscrolling. The ruler is a canvas of visible ticks only (no per-frame DOM), the slider
+  is linear in `level` so each doubling takes the same distance, and plain/shift wheel pans
+  while Ctrl/Cmd + wheel zooms continuously. While playing, `requestAnimationFrame` reads
+  `video.currentTime`; while scrubbing or stepping, the playhead state is authoritative and
+  the element is told to seek (coalesced to one in flight, read-back suppressed until
+  `seeked`). Nothing renders, exports or edits the media: one track holds one clip spanning the
+  duration, and the only real playback is the project's HLS in the preview. Preview and
+  playhead share the same element and Video.js store (`usePlayer`); mute is a `muted` prop on
+  the media element (the store throws `NO_TARGET` before the media attaches), and hide swaps
+  the picture for a "Video hidden" overlay without pausing audio.
 - No refresh tokens, no token storage, no client secret.
 
 ## 4. Repo layout
@@ -189,8 +198,9 @@ components/
                            create-project-dialog, create-project-form,
                            project-card, project-status-badge,
                            project-video-player, google-drive-file-picker
-  editor/                  video-editor (store + layout), editor-preview,
-                           editor-timeline (ruler, playhead, track headers)
+  editor/                  video-editor (layout), editor-preview,
+                           editor-timeline (canvas ruler, playhead, tracks),
+                           use-timeline (viewport + playback clock)
   auth/                    better-auth-ui components (generated)
   providers.tsx            QueryClient + AuthProvider (client boundary)
 lib/
@@ -205,8 +215,9 @@ lib/
   api/schemas/             zod schemas for upstream payloads
   projects.ts              input/output registries, field controls, draft builder
                            (client-safe)
-  editor.ts                timeline model (tracks/clips, time), timecode and
-                           pixel/time conversion (client-safe)
+  editor.ts                timeline model: tracks/clips in seconds (client-safe)
+  timeline.ts              viewport math, zoom anchoring, scroll clamp, ruler ticks,
+                           frame snapping and timecode (pure, client-safe, tested)
   media.ts                 storage key → absolute media URL, playable result shape
                            (client-safe)
   connections.ts           provider + category registry, grouping helpers
@@ -704,6 +715,25 @@ those files; re-run the CLI instead.
   sits in the panel header, not the control bar, because Radix portals its menu to `body` and
   that portal would be invisible inside a fullscreen `Container`; `Save`/export, clip editing
   and asset import remain out of scope.
+- **2026-11-25** — Replaced the editor's pixel-zoom timeline with a **viewport** model ported
+  from the owner's demo. `lib/editor.ts` is now time-only; `lib/timeline.ts` owns `{ level,
+  scrollX }`, `basePxPerSec = viewportWidth / 3 / duration` computed once per duration (and on
+  the explicit reset), `maxLevelFor` (`max(1, log2(FRAME_PX*30/base))`), `maxScrollFor`
+  (`duration*pxPerSec + PAD + 0.26*viewportWidth - viewportWidth`), `timeToX`/`xToTime`, frame
+  snapping and ruler steps. Zoom anchors on the playhead: read its x, change the level, solve
+  the scroll that keeps that x, then clamp — that one clamp gives the edge cases (0 stays on
+  the pad, the end comes in from the right by the margin, content that fits grows from the
+  left). The slider is linear in `level`, so equal distances are equal doublings; +/− step to
+  whole levels, `Frame` jumps to the 200px-per-frame stop, and Ctrl/Cmd + wheel is continuous.
+  `components/editor/use-timeline.ts` holds the one clock: rAF reads `video.currentTime` while
+  playing, scrub/step state owns the time otherwise, seeks coalesce to one in flight and the
+  read-back is suppressed until `seeked`; auto-scroll follows at the right edge and is
+  suspended for ~1.2s after a manual pan/drag. The ruler is a canvas of visible ticks (labels
+  from `[1,2,5,10,15]` frames then seconds, ≥90px apart), the clip draws a frame grid from 8px
+  per frame and a one-frame band from 40px, and the lane clips instead of scrolling natively so
+  `scrollX` is the only scroll. `min-w-0` on the section stays. No new dependency;
+  `bun run check` green with 222 tests. Playback remains unverified in the agent environment
+  (no reachable `MEDIA_BASE_URL`).
 
 ## 11. Deferred / follow-ups
 

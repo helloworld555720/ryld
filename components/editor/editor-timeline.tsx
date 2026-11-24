@@ -1,36 +1,51 @@
 "use client";
 
-import { usePlayer } from "@videojs/react/video";
 import {
   Clapperboard,
   Eye,
   EyeOff,
   Film,
   Music,
+  Pause,
+  Play,
+  RotateCcw,
+  StepBack,
+  StepForward,
   Volume2,
   VolumeX,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  type KeyboardEvent,
+  type PointerEvent,
+  type RefObject,
+} from "react";
 
+import { useTimeline } from "@/components/editor/use-timeline";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import type { EditorTrack } from "@/lib/editor";
 import {
-  EDITOR_ZOOM,
-  clampTime,
-  formatRulerLabel,
+  FRAME_BAND_MIN_PX,
+  FRAME_GRID_MIN_PX,
   formatTimecode,
-  pixelsToTime,
-  tickStep,
-  timeToPixels,
-  timelineDuration,
-  type EditorTrack,
-} from "@/lib/editor";
+  pxPerFrameAt,
+  pxPerSecAt,
+  timeToX,
+  visibleTicks,
+  xToTime,
+  type TimelineViewport,
+} from "@/lib/timeline";
 import { cn } from "@/lib/utils";
 
-/** A little runway past the last clip, so the timeline does not end at a wall. */
-const TAIL_PX = 240;
+/** Ruler height, and the matching gutter in the track header column. */
+const RULER_HEIGHT = 32;
+
+/** One track row, and the matching track header height. */
+const TRACK_HEIGHT = 64;
 
 export interface EditorTimelineProps {
   tracks: EditorTrack[];
@@ -39,6 +54,8 @@ export interface EditorTimelineProps {
     patch: Partial<Pick<EditorTrack, "muted" | "hidden">>,
   ) => void;
   clipLabel: string;
+  /** The one `<video>` element both the preview and the timeline drive. */
+  videoRef: RefObject<HTMLVideoElement | null>;
 }
 
 function TrackHeader({
@@ -106,130 +123,199 @@ function TrackHeader({
 /**
  * The single editing surface.
  *
- * Time is the only thing stored: clips are positioned with
- * `timeToPixels(start, pxPerSecond)`, so zooming changes the ruler and clip
- * widths without touching the model. The playhead is derived from the player's
- * `currentTime` (with a local override while scrubbing), which is why playing
- * moves it and dragging it seeks the preview — there is no second clock.
+ * Pixels are never stored. The timeline keeps `{ level, scrollX }` and draws
+ * everything through the pure functions in `lib/timeline.ts`, so the model in
+ * `lib/editor.ts` stays in seconds and the ruler, clips and playhead cannot
+ * disagree about where a time is.
+ *
+ * One source of truth for the playhead at a time: while the video plays,
+ * `requestAnimationFrame` reads the element's `currentTime`; while the user
+ * drags or steps, the state here is authoritative and the element is told to
+ * seek. See `useTimeline`.
  */
 export function EditorTimeline({
   tracks,
   onTrackChange,
   clipLabel,
+  videoRef,
 }: EditorTimelineProps) {
-  const store = usePlayer();
-  const currentTime = usePlayer((state) => state.currentTime);
-  const duration = usePlayer((state) => state.duration);
+  const timeline = useTimeline(videoRef);
+  const {
+    laneRef,
+    time,
+    duration,
+    playing,
+    basePxPerSec,
+    viewportWidth,
+    level,
+    scrollX,
+    maxLevel,
+    seekTo,
+    step,
+    toggle,
+    zoomTo,
+    zoomIn,
+    zoomOut,
+    zoomToFrame,
+    resetZoom,
+    markManual,
+  } = timeline;
 
-  const [pxPerSecond, setPxPerSecond] = useState<number>(EDITOR_ZOOM.initial);
-  const [scrub, setScrub] = useState<number | null>(null);
-
-  const laneRef = useRef<HTMLDivElement>(null);
-  const scrubRef = useRef<number | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const draggingRef = useRef(false);
 
-  const mediaDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
-  const timelineEnd = Math.max(mediaDuration, timelineDuration(tracks));
-  const playhead = scrub ?? currentTime;
+  const viewport: TimelineViewport = { level, scrollX };
+  const pxPerSecond = basePxPerSec === null ? 0 : pxPerSecAt(level, basePxPerSec);
+  const pxPerFrame = basePxPerSec === null ? 0 : pxPerFrameAt(level, basePxPerSec);
+  const playheadX =
+    basePxPerSec === null ? 0 : timeToX(time, viewport, basePxPerSec);
+  const endX = basePxPerSec === null ? 0 : timeToX(duration, viewport, basePxPerSec);
 
-  const step = tickStep(pxPerSecond);
-  const tickCount = Math.min(Math.ceil(timelineEnd / step) + 1, 2000);
-  const ticks = Array.from({ length: tickCount }, (_, index) => index * step);
-  const contentWidth = timeToPixels(timelineEnd, pxPerSecond) + TAIL_PX;
+  /* The ruler is a canvas: at frame level a clip is 30 labels per second, so a
+   * DOM per tick would be a layout problem, not a style choice. Only visible
+   * ticks are drawn. */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || basePxPerSec === null || viewportWidth <= 0) return;
 
-  const seekToClientX = (clientX: number) => {
+    const context = canvas.getContext("2d");
+    if (!context) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(viewportWidth * dpr));
+    canvas.height = Math.round(RULER_HEIGHT * dpr);
+
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.clearRect(0, 0, viewportWidth, RULER_HEIGHT);
+
+    const styles = getComputedStyle(canvas);
+    const lineColor =
+      styles.getPropertyValue("--border").trim() || "rgba(255,255,255,0.12)";
+    const textColor =
+      styles.getPropertyValue("--muted-foreground").trim() ||
+      "rgba(255,255,255,0.6)";
+
+    context.lineWidth = 1;
+    context.strokeStyle = lineColor;
+    context.fillStyle = textColor;
+    context.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
+    context.textBaseline = "top";
+
+    context.beginPath();
+    context.moveTo(0, RULER_HEIGHT - 0.5);
+    context.lineTo(viewportWidth, RULER_HEIGHT - 0.5);
+    context.stroke();
+
+    const { labels, minors } = visibleTicks({
+      viewport: { level, scrollX },
+      basePxPerSec,
+      viewportWidth,
+    });
+
+    for (const minor of minors) {
+      const x = Math.round(minor.x) + 0.5;
+      context.beginPath();
+      context.moveTo(x, RULER_HEIGHT - 6);
+      context.lineTo(x, RULER_HEIGHT);
+      context.stroke();
+    }
+
+    for (const label of labels) {
+      const x = Math.round(label.x) + 0.5;
+      context.beginPath();
+      context.moveTo(x, 12);
+      context.lineTo(x, RULER_HEIGHT);
+      context.stroke();
+      context.fillText(label.label, x + 4, 4);
+    }
+  }, [basePxPerSec, level, scrollX, viewportWidth]);
+
+  const seekFromClientX = (clientX: number) => {
     const lane = laneRef.current;
-    if (!lane) return;
+    if (!lane || basePxPerSec === null) return;
 
     const rect = lane.getBoundingClientRect();
-    const time = clampTime(
-      pixelsToTime(clientX - rect.left, pxPerSecond),
-      timelineEnd,
-    );
-
-    scrubRef.current = time;
-    setScrub(time);
-    void store.seek(time).catch(() => undefined);
+    seekTo(xToTime(clientX - rect.left, viewport, basePxPerSec));
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
 
+    event.currentTarget.focus();
     event.currentTarget.setPointerCapture(event.pointerId);
     draggingRef.current = true;
-    seekToClientX(event.clientX);
+    markManual();
+
+    /* Dragging is a scrub, not a play: the playhead owns the target time while
+     * the pointer is down, so playback must not keep advancing it. */
+    timeline.pause();
+    seekFromClientX(event.clientX);
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (!draggingRef.current) return;
-    seekToClientX(event.clientX);
+    seekFromClientX(event.clientX);
   };
 
-  const finishScrub = () => {
+  const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
     if (!draggingRef.current) return;
     draggingRef.current = false;
 
-    const time = scrubRef.current;
-    scrubRef.current = null;
-
-    if (time === null) {
-      setScrub(null);
-      return;
-    }
-
-    // Wait for the seek the store ends on before giving the line back, so the
-    // playhead does not jump backwards for a frame on release.
-    void store
-      .seek(time)
-      .catch(() => undefined)
-      .finally(() => setScrub(null));
-  };
-
-  const handlePlayheadKeys = (event: KeyboardEvent<HTMLDivElement>) => {
-    const nudge = event.shiftKey ? 5 : 1;
-
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      void store
-        .seek(clampTime(playhead - nudge, timelineEnd))
-        .catch(() => undefined);
-    }
-
-    if (event.key === "ArrowRight") {
-      event.preventDefault();
-      void store
-        .seek(clampTime(playhead + nudge, timelineEnd))
-        .catch(() => undefined);
-    }
-
-    if (event.key === "Home" || event.key === "End") {
-      event.preventDefault();
-      const time = event.key === "Home" ? 0 : timelineEnd;
-      void store.seek(time).catch(() => undefined);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
     }
   };
 
-  const changeZoom = (next: number) => {
-    setPxPerSecond(
-      Math.min(EDITOR_ZOOM.max, Math.max(EDITOR_ZOOM.min, next)),
-    );
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const key = event.key;
+
+    if (key === "ArrowLeft") {
+      event.preventDefault();
+      step(event.shiftKey ? -10 : -1);
+    } else if (key === "ArrowRight") {
+      event.preventDefault();
+      step(event.shiftKey ? 10 : 1);
+    } else if (key === "Home") {
+      event.preventDefault();
+      seekTo(0);
+    } else if (key === "End") {
+      event.preventDefault();
+      seekTo(duration);
+    } else if (key === " ") {
+      event.preventDefault();
+      toggle();
+    } else if (key === "+" || key === "=") {
+      event.preventDefault();
+      zoomIn();
+    } else if (key === "-" || key === "_") {
+      event.preventDefault();
+      zoomOut();
+    }
   };
+
+  const frameGrid =
+    pxPerFrame >= FRAME_GRID_MIN_PX
+      ? `repeating-linear-gradient(90deg, transparent 0, transparent ${
+          pxPerFrame - 1
+        }px, var(--border) ${pxPerFrame - 1}px, var(--border) ${pxPerFrame}px)`
+      : undefined;
+
+  const frameBand = pxPerFrame >= FRAME_BAND_MIN_PX;
+  const endShadeX = Math.max(0, endX);
 
   /*
-   * `min-w-0` on the section below is load-bearing. The section is a grid item
-   * in the editor's single-column grid, and the lane inside it is as wide as
-   * the clip at the current zoom (a 4-minute clip is ~15 000px). Without it the
-   * grid sizes that column to the lane's min-content, stretching the editor far
-   * past the viewport: the inspector is pushed off-screen and the preview
-   * becomes so wide that `object-contain` centres the picture outside the
-   * window (black picture, audio only). The lane scrolls on its own.
+   * `min-w-0` on the section is load-bearing. It is a grid item in the editor's
+   * single grid column, and at high zoom the clip is tens of thousands of
+   * pixels wide. Without it the column sizes to the content, the inspector is
+   * pushed off-screen, and the preview's `object-contain` picture is centred
+   * outside the window (black picture, audio only). The lane clips instead.
    */
   return (
     <section
       aria-labelledby="timeline-heading"
       className="flex min-h-0 min-w-0 flex-col border-t bg-card/40"
     >
-      <header className="flex h-10 shrink-0 items-center gap-3 border-b px-3">
+      <header className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
         <h2
           id="timeline-heading"
           className="flex items-center gap-1.5 text-xs font-medium"
@@ -237,13 +323,49 @@ export function EditorTimeline({
           <Clapperboard className="size-3.5" aria-hidden="true" />
           Timeline
         </h2>
-        <p className="text-muted-foreground text-[11px]">
-          {tracks.length} {tracks.length === 1 ? "track" : "tracks"} ·{" "}
-          {formatTimecode(timelineEnd)}
+
+        <p className="text-muted-foreground font-mono text-[11px] tabular-nums">
+          {formatTimecode(time)}{" "}
+          <span className="opacity-60">/ {formatTimecode(duration)}</span>
         </p>
 
+        <div className="flex items-center gap-0.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Previous frame"
+            onClick={() => step(-1)}
+          >
+            <StepBack aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={playing ? "Pause" : "Play"}
+            aria-pressed={playing}
+            onClick={toggle}
+          >
+            {playing ? (
+              <Pause className="fill-current" aria-hidden="true" />
+            ) : (
+              <Play className="fill-current" aria-hidden="true" />
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Next frame"
+            onClick={() => step(1)}
+          >
+            <StepForward aria-hidden="true" />
+          </Button>
+        </div>
+
         <div className="ml-auto flex items-center gap-2">
-          <span className="text-muted-foreground text-[10px] tracking-wider uppercase">
+          <span className="text-muted-foreground hidden text-[10px] tracking-wider uppercase xl:inline">
             Zoom
           </span>
           <Button
@@ -251,34 +373,60 @@ export function EditorTimeline({
             variant="ghost"
             size="icon-xs"
             aria-label="Zoom out timeline"
-            onClick={() => changeZoom(pxPerSecond - EDITOR_ZOOM.step)}
+            disabled={basePxPerSec === null}
+            onClick={zoomOut}
           >
             <ZoomOut aria-hidden="true" />
           </Button>
           <Slider
             aria-label="Timeline zoom"
-            value={[pxPerSecond]}
-            min={EDITOR_ZOOM.min}
-            max={EDITOR_ZOOM.max}
-            step={EDITOR_ZOOM.step}
-            onValueChange={(value) => changeZoom(value[0] ?? pxPerSecond)}
-            className="w-28"
+            value={[level]}
+            min={0}
+            max={Math.max(maxLevel, 1)}
+            step={0.01}
+            disabled={basePxPerSec === null}
+            onValueChange={(value) => zoomTo(value[0] ?? level)}
+            className="w-24 sm:w-32"
           />
           <Button
             type="button"
             variant="ghost"
             size="icon-xs"
             aria-label="Zoom in timeline"
-            onClick={() => changeZoom(pxPerSecond + EDITOR_ZOOM.step)}
+            disabled={basePxPerSec === null}
+            onClick={zoomIn}
           >
             <ZoomIn aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="xs"
+            disabled={basePxPerSec === null}
+            onClick={zoomToFrame}
+          >
+            Frame
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Reset zoom so the clip fills one third"
+            disabled={basePxPerSec === null}
+            onClick={resetZoom}
+          >
+            <RotateCcw aria-hidden="true" />
           </Button>
         </div>
       </header>
 
       <div className="flex min-h-0 flex-1">
         <div className="flex w-44 shrink-0 flex-col border-r">
-          <div className="h-8 shrink-0 border-b" aria-hidden="true" />
+          <div
+            className="shrink-0 border-b"
+            style={{ height: RULER_HEIGHT }}
+            aria-hidden="true"
+          />
           {tracks.map((track) => (
             <TrackHeader
               key={track.id}
@@ -289,86 +437,112 @@ export function EditorTimeline({
           ))}
         </div>
 
-        <div className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden">
-          <div
-            ref={laneRef}
-            className="relative min-w-full touch-none select-none"
-            style={{ width: contentWidth }}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={finishScrub}
-            onPointerCancel={finishScrub}
-          >
+        <div
+          ref={laneRef}
+          role="slider"
+          tabIndex={0}
+          aria-label="Timeline playhead"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(duration)}
+          aria-valuenow={Math.min(Math.round(time), Math.round(duration))}
+          aria-valuetext={formatTimecode(time)}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          onKeyDown={handleKeyDown}
+          className="relative min-w-0 flex-1 cursor-crosshair touch-none overflow-hidden outline-none select-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        >
+          <canvas
+            ref={canvasRef}
+            className="pointer-events-none absolute top-0 left-0 h-8 w-full"
+            aria-hidden="true"
+          />
+
+          {basePxPerSec !== null && duration > 0 ? (
             <div
-              className="relative h-8 border-b"
+              className="pointer-events-none absolute bottom-0"
+              style={{
+                top: RULER_HEIGHT,
+                left: endShadeX,
+                width: Math.max(0, viewportWidth - endShadeX),
+                backgroundImage:
+                  "repeating-linear-gradient(135deg, transparent 0 6px, var(--border) 6px 7px)",
+                opacity: 0.35,
+              }}
+              aria-hidden="true"
+            />
+          ) : null}
+
+          {tracks.map((track, index) => (
+            <div
+              key={track.id}
+              className="absolute inset-x-0 border-b bg-white/[0.015]"
+              style={{
+                top: RULER_HEIGHT + index * TRACK_HEIGHT,
+                height: TRACK_HEIGHT,
+              }}
+            >
+              {basePxPerSec !== null
+                ? track.clips.map((clip) => (
+                    <div
+                      key={clip.id}
+                      className="pointer-events-none absolute top-2 bottom-2 overflow-hidden rounded-md border border-primary/40 bg-primary/10"
+                      style={{
+                        left: timeToX(clip.start, viewport, basePxPerSec),
+                        width: Math.max(clip.duration * pxPerSecond, 2),
+                      }}
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-r from-primary/20 via-primary/10 to-primary/20" />
+                      {frameGrid ? (
+                        <div
+                          className="absolute inset-0"
+                          style={{ backgroundImage: frameGrid }}
+                          aria-hidden="true"
+                        />
+                      ) : null}
+
+                      <div className="relative flex h-full items-center gap-1.5 px-2">
+                        <Film
+                          className="text-primary size-3.5 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span className="truncate text-[11px] font-medium">
+                          {clipLabel}
+                        </span>
+                        <span className="text-muted-foreground ml-auto shrink-0 font-mono text-[10px]">
+                          {formatTimecode(clip.duration)}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                : null}
+            </div>
+          ))}
+
+          {basePxPerSec !== null && frameBand ? (
+            <div
+              className="pointer-events-none absolute z-10 bg-destructive/10"
+              style={{
+                left: playheadX,
+                width: pxPerFrame,
+                top: RULER_HEIGHT,
+                bottom: 0,
+              }}
+              aria-hidden="true"
+            />
+          ) : null}
+
+          {basePxPerSec !== null ? (
+            <div
+              className="pointer-events-none absolute top-0 bottom-0 z-20 w-px"
+              style={{ left: playheadX }}
               aria-hidden="true"
             >
-              {ticks.map((tick) => (
-                <div
-                  key={tick}
-                  className="absolute inset-y-0"
-                  style={{ left: timeToPixels(tick, pxPerSecond) }}
-                >
-                  <span className="bg-border absolute top-0 left-0 h-2 w-px" />
-                  <span className="text-muted-foreground absolute top-2.5 left-1 font-mono text-[10px] whitespace-nowrap">
-                    {formatRulerLabel(tick)}
-                  </span>
-                </div>
-              ))}
+              <div className="absolute inset-y-0 -left-px w-0.5 bg-destructive" />
+              <div className="absolute top-0 left-1/2 h-3 w-3 -translate-x-1/2 rounded-b-sm bg-destructive" />
             </div>
-
-            {tracks.map((track) => (
-              <div
-                key={track.id}
-                className="relative h-16 border-b bg-white/[0.015]"
-              >
-                {track.clips.map((clip) => (
-                  <div
-                    key={clip.id}
-                    className="pointer-events-none absolute top-2 bottom-2 overflow-hidden rounded-md border border-primary/40 bg-gradient-to-r from-primary/20 via-primary/10 to-primary/20"
-                    style={{
-                      left: timeToPixels(clip.start, pxPerSecond),
-                      width: Math.max(
-                        timeToPixels(clip.duration, pxPerSecond),
-                        2,
-                      ),
-                    }}
-                  >
-                    <div className="flex h-full items-center gap-1.5 px-2">
-                      <Film
-                        className="text-primary size-3.5 shrink-0"
-                        aria-hidden="true"
-                      />
-                      <span className="truncate text-[11px] font-medium">
-                        {clipLabel}
-                      </span>
-                      <span className="text-muted-foreground ml-auto shrink-0 font-mono text-[10px]">
-                        {formatTimecode(clip.duration)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))}
-
-            <div
-              className="pointer-events-none absolute inset-y-0 z-20"
-              style={{ left: timeToPixels(playhead, pxPerSecond) }}
-            >
-              <div className="bg-primary h-full w-px" />
-              <div
-                role="slider"
-                tabIndex={0}
-                aria-label="Playhead"
-                aria-valuemin={0}
-                aria-valuemax={Math.round(timelineEnd)}
-                aria-valuenow={Math.round(playhead)}
-                aria-valuetext={formatTimecode(playhead)}
-                onKeyDown={handlePlayheadKeys}
-                className="bg-primary focus-visible:ring-ring pointer-events-auto absolute top-0 -left-1.5 h-4 w-3 rounded-b-sm focus-visible:ring-2 focus-visible:outline-none"
-              />
-            </div>
-          </div>
+          ) : null}
         </div>
       </div>
     </section>

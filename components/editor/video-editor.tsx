@@ -8,7 +8,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { EditorPreview } from "@/components/editor/editor-preview";
 import { EditorTimeline } from "@/components/editor/editor-timeline";
@@ -95,6 +95,13 @@ export function VideoEditor({ projectId, title, media }: VideoEditorProps) {
 function EditorBody({ projectId, title, media }: VideoEditorProps) {
   const duration = usePlayer((state) => state.duration);
 
+  /*
+   * The `<video>` element the preview renders is also what the timeline drives.
+   * One element, one clock: the preview does not own playback state and the
+   * timeline does not own a second copy of the media.
+   */
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
   const [tracks, setTracks] = useState<EditorTrack[]>(createInitialTracks);
 
   /*
@@ -151,7 +158,12 @@ function EditorBody({ projectId, title, media }: VideoEditorProps) {
             side="left"
           />
 
-          <EditorPreview media={media} muted={muted} hidden={hidden} />
+          <EditorPreview
+            media={media}
+            videoRef={videoRef}
+            muted={muted}
+            hidden={hidden}
+          />
 
           <PlaceholderPanel
             id="inspector-heading"
@@ -166,6 +178,7 @@ function EditorBody({ projectId, title, media }: VideoEditorProps) {
           tracks={timelineTracks}
           onTrackChange={changeTrack}
           clipLabel={title}
+          videoRef={videoRef}
         />
       </div>
     </div>

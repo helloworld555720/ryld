@@ -1,15 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  EDITOR_ZOOM,
-  clampTime,
   createInitialTracks,
-  formatRulerLabel,
-  formatTimecode,
-  pixelsToTime,
-  tickStep,
   timelineDuration,
-  timeToPixels,
   videoHidden,
   videoMuted,
   withMediaDuration,
@@ -137,7 +130,9 @@ describe("timelineDuration", () => {
         type: "audio",
         muted: false,
         hidden: false,
-        clips: [{ id: "c3", trackId: "b", start: 1, duration: 5, sourceOffset: 0 }],
+        clips: [
+          { id: "c3", trackId: "b", start: 1, duration: 5, sourceOffset: 0 },
+        ],
       },
     ];
 
@@ -146,69 +141,5 @@ describe("timelineDuration", () => {
 
   it("is zero without clips", () => {
     expect(timelineDuration([])).toBe(0);
-  });
-});
-
-describe("pixels and time", () => {
-  it("converts both ways at the current zoom", () => {
-    expect(timeToPixels(3, 50)).toBe(150);
-    expect(pixelsToTime(150, 50)).toBe(3);
-    expect(pixelsToTime(timeToPixels(12.5, 24), 24)).toBeCloseTo(12.5);
-  });
-
-  it("treats a non-positive zoom as zero time instead of dividing by zero", () => {
-    expect(pixelsToTime(100, 0)).toBe(0);
-    expect(pixelsToTime(100, -10)).toBe(0);
-  });
-
-  it("clamps to the timeline", () => {
-    expect(clampTime(-3, 10)).toBe(0);
-    expect(clampTime(4, 10)).toBe(4);
-    expect(clampTime(11, 10)).toBe(10);
-    expect(clampTime(Number.NaN, 10)).toBe(0);
-    expect(clampTime(4, 0)).toBe(4);
-  });
-});
-
-describe("formatTimecode", () => {
-  it("matches the reference display at 60 fps", () => {
-    expect(formatTimecode(0)).toBe("00:00:00:00");
-    expect(formatTimecode(2.983)).toBe("00:00:02:59");
-    expect(formatTimecode(263)).toBe("00:04:23:00");
-    expect(formatTimecode(3661)).toBe("01:01:01:00");
-  });
-
-  it("renders junk as zero instead of NaN", () => {
-    expect(formatTimecode(-4)).toBe("00:00:00:00");
-    expect(formatTimecode(Number.NaN)).toBe("00:00:00:00");
-    expect(formatTimecode(Number.POSITIVE_INFINITY)).toBe("00:00:00:00");
-  });
-
-  it("honours a different frame rate", () => {
-    expect(formatTimecode(2.5, 30)).toBe("00:00:02:15");
-  });
-});
-
-describe("formatRulerLabel", () => {
-  it("uses mm:ss below an hour and h:mm:ss above it", () => {
-    expect(formatRulerLabel(0)).toBe("00:00");
-    expect(formatRulerLabel(65)).toBe("01:05");
-    expect(formatRulerLabel(3661)).toBe("1:01:01");
-  });
-});
-
-describe("tickStep", () => {
-  it("keeps labels apart at every zoom the slider allows", () => {
-    for (const pxPerSecond of [
-      EDITOR_ZOOM.min,
-      EDITOR_ZOOM.initial,
-      EDITOR_ZOOM.max,
-    ]) {
-      expect(tickStep(pxPerSecond) * pxPerSecond).toBeGreaterThanOrEqual(72);
-    }
-  });
-
-  it("uses finer steps as the timeline zooms in", () => {
-    expect(tickStep(EDITOR_ZOOM.min)).toBeGreaterThan(tickStep(EDITOR_ZOOM.max));
   });
 });

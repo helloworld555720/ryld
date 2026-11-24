@@ -4,7 +4,7 @@ import { Container } from "@videojs/react";
 import { HlsJsVideo } from "@videojs/react/media/hlsjs-video";
 import { usePlayer } from "@videojs/react/video";
 import { EyeOff, Maximize, Minimize, Pause, Play } from "lucide-react";
-import { useState } from "react";
+import { useState, type RefObject } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatTimecode } from "@/lib/editor";
+import { FPS, formatTimecode } from "@/lib/timeline";
 import type { ProjectMedia } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +30,8 @@ const PREVIEW_ZOOMS: ReadonlyArray<{ value: PreviewZoom; label: string }> = [
 
 export interface EditorPreviewProps {
   media: ProjectMedia;
+  /** The element the timeline reads and seeks, shared through this ref. */
+  videoRef: RefObject<HTMLVideoElement | null>;
   /** The video track's mute: applied to the media element itself. */
   muted: boolean;
   /** Set by the timeline's hide toggle: audio keeps playing, the picture does not. */
@@ -55,7 +57,12 @@ export interface EditorPreviewProps {
  * portal would render outside the fullscreen surface and be invisible. The
  * in-player controls stay to play/pause, the timecode and fullscreen.
  */
-export function EditorPreview({ media, muted, hidden }: EditorPreviewProps) {
+export function EditorPreview({
+  media,
+  videoRef,
+  muted,
+  hidden,
+}: EditorPreviewProps) {
   const store = usePlayer();
   const paused = usePlayer((state) => state.paused);
   const currentTime = usePlayer((state) => state.currentTime);
@@ -65,11 +72,22 @@ export function EditorPreview({ media, muted, hidden }: EditorPreviewProps) {
   const [zoom, setZoom] = useState<PreviewZoom>("fit");
 
   const togglePlayback = () => {
-    if (paused) {
-      void store.play().catch(() => undefined);
-    } else {
+    if (!paused) {
       store.pause();
+      return;
     }
+
+    /* Playing from the final frame would end immediately, so start over. */
+    const atEnd = duration > 0 && currentTime >= duration - 1 / (FPS * 2);
+    if (atEnd) {
+      void store
+        .seek(0)
+        .then(() => store.play())
+        .catch(() => undefined);
+      return;
+    }
+
+    void store.play().catch(() => undefined);
   };
 
   const toggleFullscreen = () => {
@@ -138,6 +156,7 @@ export function EditorPreview({ media, muted, hidden }: EditorPreviewProps) {
             }}
           >
             <HlsJsVideo
+              ref={videoRef}
               src={media.playlist}
               poster={media.poster}
               muted={muted}
