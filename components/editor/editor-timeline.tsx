@@ -522,7 +522,7 @@ export function EditorTimeline({
 
           {basePxPerSec !== null && frameBand ? (
             <div
-              className="pointer-events-none absolute z-10 bg-destructive/10"
+              className="pointer-events-none absolute z-10 bg-white/10"
               style={{
                 left: playheadX,
                 width: pxPerFrame,
@@ -535,12 +535,15 @@ export function EditorTimeline({
 
           {basePxPerSec !== null ? (
             <div
-              className="pointer-events-none absolute top-0 bottom-0 z-20 w-px"
+              className="pointer-events-none absolute top-0 bottom-0 z-20 w-3 -translate-x-1/2"
               style={{ left: playheadX }}
               aria-hidden="true"
             >
-              <div className="absolute inset-y-0 -left-px w-0.5 bg-destructive" />
-              <div className="absolute top-0 left-1/2 h-3 w-3 -translate-x-1/2 rounded-b-sm bg-destructive" />
+              {/* One anchor, one transform: the line and the head share the
+               * exact same centre, so subpixel rounding cannot make them drift
+               * apart while the playhead moves during playback. */}
+              <div className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-white" />
+              <div className="absolute top-0 left-0 h-3 w-3 rounded-b-sm bg-white" />
             </div>
           ) : null}
         </div>
