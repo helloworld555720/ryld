@@ -8,16 +8,22 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { EditorPreview } from "@/components/editor/editor-preview";
 import { EditorTimeline } from "@/components/editor/editor-timeline";
 import { Button } from "@/components/ui/button";
 import {
   createInitialTracks,
+  deleteClipAt,
+  deleteLeftAt,
+  deleteRightAt,
+  splitClip,
+  updateVideoClips,
   videoHidden,
   videoMuted,
   withMediaDuration,
+  type ClipEditAction,
   type EditorTrack,
 } from "@/lib/editor";
 import type { ProjectMedia } from "@/lib/media";
@@ -92,6 +98,18 @@ export function VideoEditor({ projectId, title, media }: VideoEditorProps) {
   );
 }
 
+/**
+ * The right half of a split needs an id that is unique at interaction time.
+ * This never runs during render, so it cannot cause a hydration mismatch.
+ */
+function newClipId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `clip-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function EditorBody({ projectId, title, media }: VideoEditorProps) {
   const duration = usePlayer((state) => state.duration);
 
@@ -108,10 +126,13 @@ function EditorBody({ projectId, title, media }: VideoEditorProps) {
    * The clip starts with no duration because metadata is the first thing that
    * knows how long the video is. Deriving it during render (rather than writing
    * it back in an effect) keeps state and display consistent without a
-   * cascading update, and a future trim still wins: only zero-length clips are
-   * filled in.
+   * cascading update, and a trim or split still wins: only zero-length clips
+   * are filled in.
    */
-  const timelineTracks = withMediaDuration(tracks, duration);
+  const timelineTracks = useMemo(
+    () => withMediaDuration(tracks, duration),
+    [tracks, duration],
+  );
 
   const muted = videoMuted(timelineTracks);
   const hidden = videoHidden(timelineTracks);
@@ -125,6 +146,35 @@ function EditorBody({ projectId, title, media }: VideoEditorProps) {
         track.id === trackId ? { ...track, ...patch } : track,
       ),
     );
+  };
+
+  /*
+   * Edits run against the filled model, so the first split always has a real
+   * duration to cut. `withMediaDuration` is idempotent afterwards. The model
+   * functions return new arrays and re-flow the survivors themselves; this
+   * handler only chooses the operation.
+   */
+  const editClips = (action: ClipEditAction, at: number) => {
+    const rightId = action === "split" ? newClipId() : null;
+
+    setTracks((current) => {
+      const filled = withMediaDuration(current, duration);
+
+      switch (action) {
+        case "split":
+          return updateVideoClips(filled, (next) =>
+            splitClip(next, at, () => rightId ?? newClipId()),
+          );
+        case "delete-left":
+          return updateVideoClips(filled, (next) => deleteLeftAt(next, at));
+        case "delete-right":
+          return updateVideoClips(filled, (next) => deleteRightAt(next, at));
+        case "delete-clip":
+          return updateVideoClips(filled, (next) => deleteClipAt(next, at));
+        default:
+          return filled;
+      }
+    });
   };
 
   return (
@@ -177,6 +227,7 @@ function EditorBody({ projectId, title, media }: VideoEditorProps) {
         <EditorTimeline
           tracks={timelineTracks}
           onTrackChange={changeTrack}
+          onClipEdit={editClips}
           clipLabel={title}
           videoRef={videoRef}
         />

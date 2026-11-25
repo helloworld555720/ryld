@@ -7,10 +7,14 @@ import {
   Film,
   Music,
   Pause,
+  PanelLeft,
+  PanelRight,
   Play,
   RotateCcw,
+  SquareSplitHorizontal,
   StepBack,
   StepForward,
+  Trash2,
   Volume2,
   VolumeX,
   ZoomIn,
@@ -18,6 +22,7 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useMemo,
   useRef,
   type KeyboardEvent,
   type PointerEvent,
@@ -27,7 +32,13 @@ import {
 import { useTimeline } from "@/components/editor/use-timeline";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import type { EditorTrack } from "@/lib/editor";
+import {
+  clipAtTime,
+  clipOffsetAt,
+  videoClips,
+  type ClipEditAction,
+  type EditorTrack,
+} from "@/lib/editor";
 import {
   FRAME_BAND_MIN_PX,
   FRAME_GRID_MIN_PX,
@@ -53,6 +64,8 @@ export interface EditorTimelineProps {
     trackId: string,
     patch: Partial<Pick<EditorTrack, "muted" | "hidden">>,
   ) => void;
+  /** Applies a clip edit at the given timeline time. */
+  onClipEdit: (action: ClipEditAction, time: number) => void;
   clipLabel: string;
   /** The one `<video>` element both the preview and the timeline drive. */
   videoRef: RefObject<HTMLVideoElement | null>;
@@ -136,10 +149,12 @@ function TrackHeader({
 export function EditorTimeline({
   tracks,
   onTrackChange,
+  onClipEdit,
   clipLabel,
   videoRef,
 }: EditorTimelineProps) {
-  const timeline = useTimeline(videoRef);
+  const clips = useMemo(() => videoClips(tracks), [tracks]);
+  const timeline = useTimeline(videoRef, clips);
   const {
     laneRef,
     time,
@@ -160,6 +175,18 @@ export function EditorTimeline({
     resetZoom,
     markManual,
   } = timeline;
+
+  const currentClip = clipAtTime(clips, time);
+  const offset = clipOffsetAt(clips, time);
+  const atClipStart = offset === null || offset <= 1e-6;
+  const atClipEnd =
+    currentClip === null ||
+    offset === null ||
+    offset >= currentClip.duration - 1e-6;
+  const canSplit = currentClip !== null && !atClipStart && !atClipEnd;
+  const canDeleteLeft = currentClip !== null && !atClipStart;
+  const canDeleteRight = currentClip !== null && !atClipEnd;
+  const canDeleteClip = currentClip !== null;
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const draggingRef = useRef(false);
@@ -361,6 +388,59 @@ export function EditorTimeline({
             onClick={() => step(1)}
           >
             <StepForward aria-hidden="true" />
+          </Button>
+        </div>
+
+        <span className="bg-border mx-0.5 h-4 w-px" aria-hidden="true" />
+
+        <div
+          className="flex items-center gap-0.5"
+          role="group"
+          aria-label="Clip editing"
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Split at playhead"
+            title="Split at playhead"
+            disabled={!canSplit}
+            onClick={() => onClipEdit("split", time)}
+          >
+            <SquareSplitHorizontal aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Delete left of playhead"
+            title="Delete left of playhead"
+            disabled={!canDeleteLeft}
+            onClick={() => onClipEdit("delete-left", time)}
+          >
+            <PanelLeft aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Delete right of playhead"
+            title="Delete right of playhead"
+            disabled={!canDeleteRight}
+            onClick={() => onClipEdit("delete-right", time)}
+          >
+            <PanelRight aria-hidden="true" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Delete clip"
+            title="Delete clip"
+            disabled={!canDeleteClip}
+            onClick={() => onClipEdit("delete-clip", time)}
+          >
+            <Trash2 aria-hidden="true" />
           </Button>
         </div>
 

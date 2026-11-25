@@ -20,6 +20,13 @@ import {
   zoomedViewport,
   type TimelineViewport,
 } from "@/lib/timeline";
+import {
+  remapPlayhead,
+  sequenceDuration,
+  sourceToTimeline,
+  timelineToSource,
+  type EditorClip,
+} from "@/lib/editor";
 
 /** If the browser never reports a completed seek, resume from the media. */
 const SEEK_WATCHDOG_MS = 4_000;
@@ -70,18 +77,18 @@ export interface TimelineController {
  * until `seeked` so HLS latency cannot snap the playhead backwards. Seeks are
  * coalesced to one in flight, with the latest target kept as pending.
  *
- * `basePxPerSec` is computed once when the duration is known and the lane has
- * been measured — from media metadata or the first resize — and again only on an
- * explicit reset. Resizing changes the viewport width and the scroll clamp, not
- * the scale.
+ * `basePxPerSec` is computed once when the first non-zero sequence length is
+ * known and the lane has been measured, and again only on an explicit reset.
+ * Resizing changes the viewport width and the scroll clamp, not the scale, and
+ * a later edit changes the sequence length without rescaling what is on screen.
  */
 export function useTimeline(
   videoRef: RefObject<HTMLVideoElement | null>,
+  clips: readonly EditorClip[],
 ): TimelineController {
   const laneRef = useRef<HTMLDivElement | null>(null);
 
   const [time, setTime] = useState(0);
-  const [duration, setDuration] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [basePxPerSec, setBasePxPerSec] = useState<number | null>(null);
   const [viewportWidth, setViewportWidth] = useState(0);
@@ -90,15 +97,27 @@ export function useTimeline(
     scrollX: 0,
   });
 
+  /*
+   * The timeline's own length comes from the clips, never from the media: an
+   * edit can leave most of the source on the cutting-room floor. The media
+   * duration only matters once, when the first clip is scaled into the viewport.
+   */
+  const duration = sequenceDuration(clips);
+
   // Mirrors for the callbacks that must not be re-created per render.
   const viewportRef = useRef(viewport);
   const timeRef = useRef(0);
-  const durationRef = useRef(0);
+  const durationRef = useRef(duration);
+  const clipsRef = useRef(clips);
+  const prevClipsRef = useRef(clips);
   const baseRef = useRef(0);
   const seekingRef = useRef(false);
   const pendingSeekRef = useRef<number | null>(null);
   const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualUntilRef = useRef(0);
+
+  durationRef.current = duration;
+  clipsRef.current = clips;
 
   const setViewport = useCallback((next: TimelineViewport) => {
     viewportRef.current = next;
@@ -110,8 +129,9 @@ export function useTimeline(
   }, []);
 
   /**
-   * The one-time scale: called from media metadata and from the first resize,
-   * whichever knows both numbers first. It never runs twice until a reset.
+   * The one-time scale: called with the first non-zero sequence duration and
+   * from the first resize, whichever knows both numbers first. It never runs
+   * twice until a reset, so edits do not rescale the timeline.
    */
   const applyBase = useCallback(
     (nextDuration: number) => {
@@ -175,20 +195,12 @@ export function useTimeline(
   }, [requestSeek]);
 
   useEffect(() => {
+    applyBase(duration);
+  }, [applyBase, duration]);
+
+  useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-
-    const readDuration = () => {
-      const next =
-        Number.isFinite(video.duration) && video.duration > 0
-          ? video.duration
-          : 0;
-
-      if (next <= 0 || next === durationRef.current) return;
-      durationRef.current = next;
-      setDuration(next);
-      applyBase(next);
-    };
 
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
@@ -215,32 +227,20 @@ export function useTimeline(
       }
     };
 
-    video.addEventListener("loadedmetadata", readDuration);
-    video.addEventListener("durationchange", readDuration);
     video.addEventListener("play", onPlay);
     video.addEventListener("playing", onPlay);
     video.addEventListener("pause", onPause);
     video.addEventListener("ended", onEnded);
     video.addEventListener("seeked", onSeeked);
 
-    /*
-     * A remount can find metadata already loaded, before any event fires. The
-     * rAF hop keeps this out of the effect body (where a synchronous setState
-     * would cascade renders); on a fresh element it is simply a no-op.
-     */
-    const kickoff = requestAnimationFrame(readDuration);
-
     return () => {
-      cancelAnimationFrame(kickoff);
-      video.removeEventListener("loadedmetadata", readDuration);
-      video.removeEventListener("durationchange", readDuration);
       video.removeEventListener("play", onPlay);
       video.removeEventListener("playing", onPlay);
       video.removeEventListener("pause", onPause);
       video.removeEventListener("ended", onEnded);
       video.removeEventListener("seeked", onSeeked);
     };
-  }, [applyBase, clearSeekTimer, videoRef]);
+  }, [clearSeekTimer, videoRef]);
 
   useEffect(() => clearSeekTimer, [clearSeekTimer]);
 
@@ -251,10 +251,11 @@ export function useTimeline(
       setTime(next);
 
       const video = videoRef.current;
-      if (!video) return;
-      if (Math.abs(video.currentTime - next) < 1 / (FPS * 2)) return;
+      const source = timelineToSource(clipsRef.current, next);
+      if (!video || source === null) return;
+      if (Math.abs(video.currentTime - source) < 1 / (FPS * 2)) return;
 
-      requestSeek(next);
+      requestSeek(source);
     },
     [requestSeek, videoRef],
   );
@@ -271,17 +272,26 @@ export function useTimeline(
 
   const play = useCallback(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || durationRef.current <= 0 || clipsRef.current.length === 0) {
+      return;
+    }
 
-    if (
-      durationRef.current > 0 &&
-      timeRef.current >= durationRef.current - 1 / (FPS * 2)
-    ) {
+    if (timeRef.current >= durationRef.current - 1 / (FPS * 2)) {
       seekTo(0);
+    } else {
+      /* Starting mid-sequence must not resume the source where it was before
+       * an edit: map the playhead first, then let playback run. */
+      const source = timelineToSource(clipsRef.current, timeRef.current);
+      if (
+        source !== null &&
+        Math.abs(video.currentTime - source) >= 1 / (FPS * 2)
+      ) {
+        requestSeek(source);
+      }
     }
 
     void video.play().catch(() => undefined);
-  }, [seekTo, videoRef]);
+  }, [requestSeek, seekTo, videoRef]);
 
   const pause = useCallback(() => {
     videoRef.current?.pause();
@@ -458,13 +468,33 @@ export function useTimeline(
       const video = videoRef.current;
 
       if (video && !seekingRef.current) {
-        const next = video.ended
-          ? lastFrame(durationRef.current)
-          : snapTime(video.currentTime, durationRef.current);
-        if (next !== timeRef.current) {
-          timeRef.current = next;
-          setTime(next);
-          followPlayhead(next);
+        /*
+         * The element's clock is source time. The timeline is the edit: map the
+         * source back through the surviving clips, and when it lands in a
+         * region an edit removed, jump the element to the next clip instead of
+         * showing (or silently playing) what was cut out.
+         */
+        const mapped = sourceToTimeline(clipsRef.current, video.currentTime);
+
+        if (mapped.ended || video.ended) {
+          video.pause();
+          const end = lastFrame(durationRef.current);
+          if (end !== timeRef.current) {
+            timeRef.current = end;
+            setTime(end);
+            followPlayhead(end);
+          }
+        } else {
+          if (mapped.seek !== null) {
+            requestSeekRef.current(mapped.seek);
+          }
+
+          const next = snapTime(mapped.time, durationRef.current);
+          if (next !== timeRef.current) {
+            timeRef.current = next;
+            setTime(next);
+            followPlayhead(next);
+          }
         }
       }
 
@@ -473,6 +503,47 @@ export function useTimeline(
 
     return () => cancelAnimationFrame(frame);
   }, [followPlayhead, playing, videoRef]);
+
+  /*
+   * Keep the *frame* under the playhead across an edit, not its old timeline
+   * coordinate. Removing the head of a clip moves that frame to the clip's new
+   * start; deleting the clip under the playhead lands on the next surviving
+   * clip; deleting the tail leaves the frame at the cut. The source mapping is
+   * what makes those cases fall out without an action-specific rule.
+   */
+  useEffect(() => {
+    const video = videoRef.current;
+    const previous = prevClipsRef.current;
+    prevClipsRef.current = clips;
+
+    if (clips.length === 0) {
+      video?.pause();
+      timeRef.current = 0;
+      setTime(0);
+      return;
+    }
+
+    const oldTime = timeRef.current;
+    const remapped = remapPlayhead(previous, clips, oldTime);
+    const next = snapTime(
+      Math.min(remapped.time, durationRef.current),
+      durationRef.current,
+    );
+
+    if (next !== timeRef.current) {
+      timeRef.current = next;
+      setTime(next);
+    }
+
+    const target = remapped.seek ?? timelineToSource(clips, next);
+    if (
+      video &&
+      target !== null &&
+      Math.abs(video.currentTime - target) >= 1 / (FPS * 2)
+    ) {
+      requestSeek(target);
+    }
+  }, [clips, requestSeek, videoRef]);
 
   const maxLevel = basePxPerSec === null ? 0 : maxLevelFor(basePxPerSec);
   const level = clampLevel(viewport.level, maxLevel);
