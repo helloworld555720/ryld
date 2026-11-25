@@ -15,9 +15,10 @@ import { EditorTimeline } from "@/components/editor/editor-timeline";
 import { Button } from "@/components/ui/button";
 import {
   createInitialTracks,
-  deleteClipAt,
+  deleteClipById,
   deleteLeftAt,
   deleteRightAt,
+  moveClip,
   splitClip,
   updateVideoClips,
   videoHidden,
@@ -169,12 +170,28 @@ function EditorBody({ projectId, title, media }: VideoEditorProps) {
           return updateVideoClips(filled, (next) => deleteLeftAt(next, at));
         case "delete-right":
           return updateVideoClips(filled, (next) => deleteRightAt(next, at));
-        case "delete-clip":
-          return updateVideoClips(filled, (next) => deleteClipAt(next, at));
         default:
           return filled;
       }
     });
+  };
+
+  const deleteClip = (clipId: string) => {
+    setTracks((current) =>
+      updateVideoClips(
+        withMediaDuration(current, duration),
+        (next) => deleteClipById(next, clipId),
+      ),
+    );
+  };
+
+  const reorderClip = (clipId: string, slot: number) => {
+    setTracks((current) =>
+      updateVideoClips(
+        withMediaDuration(current, duration),
+        (next) => moveClip(next, clipId, slot),
+      ),
+    );
   };
 
   return (
@@ -228,6 +245,8 @@ function EditorBody({ projectId, title, media }: VideoEditorProps) {
           tracks={timelineTracks}
           onTrackChange={changeTrack}
           onClipEdit={editClips}
+          onDeleteClip={deleteClip}
+          onMoveClip={reorderClip}
           clipLabel={title}
           videoRef={videoRef}
         />

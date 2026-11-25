@@ -36,12 +36,8 @@ export interface EditorTrack {
   clips: EditorClip[];
 }
 
-/** The four clip operations the timeline toolbar exposes. */
-export type ClipEditAction =
-  | "split"
-  | "delete-left"
-  | "delete-right"
-  | "delete-clip";
+/** The three playhead-anchored clip operations the timeline toolbar exposes. */
+export type ClipEditAction = "split" | "delete-left" | "delete-right";
 
 /**
  * Fixed ids: the timeline is created during render (server and client), and a
@@ -300,6 +296,44 @@ export function deleteClipAt(
   if (index < 0) return clips as EditorClip[];
 
   return reflowClips(clips.filter((_, current) => current !== index));
+}
+
+/** Removes one clip by id and closes the gap it leaves. */
+export function deleteClipById(
+  clips: readonly EditorClip[],
+  id: string,
+): EditorClip[] {
+  const index = clips.findIndex((clip) => clip.id === id);
+  if (index < 0) return clips as EditorClip[];
+
+  return reflowClips(clips.filter((_, current) => current !== index));
+}
+
+/**
+ * Moves one clip to a slot in the remaining order and re-flows everything.
+ * `slot` is the index the clip should occupy after it is removed, so dragging
+ * the first clip to the end is `clips.length - 1`, not `clips.length`.
+ */
+export function moveClip(
+  clips: readonly EditorClip[],
+  id: string,
+  slot: number,
+): EditorClip[] {
+  const index = clips.findIndex((clip) => clip.id === id);
+  if (index < 0) return clips as EditorClip[];
+
+  const remaining = clips.filter((_, current) => current !== index);
+  const target = Math.min(
+    Math.max(Number.isFinite(slot) ? Math.trunc(slot) : index, 0),
+    remaining.length,
+  );
+
+  if (target === index) return clips as EditorClip[];
+
+  const next = [...remaining];
+  next.splice(target, 0, clips[index]);
+
+  return reflowClips(next);
 }
 
 /**

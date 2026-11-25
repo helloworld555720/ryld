@@ -6,8 +6,10 @@ import {
   clipOffsetAt,
   createInitialTracks,
   deleteClipAt,
+  deleteClipById,
   deleteLeftAt,
   deleteRightAt,
+  moveClip,
   reflowClips,
   remapPlayhead,
   sequenceDuration,
@@ -267,6 +269,60 @@ describe("deleteClipAt", () => {
   it("removes the trim target when the sequence has only one clip", () => {
     expect(deleteClipAt([clip("a", 0, 10, 0)], 5)).toEqual([]);
     expect(deleteClipAt([], 5)).toEqual([]);
+  });
+});
+
+describe("deleteClipById", () => {
+  it("removes the selected clip and closes the gap", () => {
+    const next = deleteClipById(twoClips(), "a");
+
+    expect(next).toEqual([clip("b", 0, 4, 10)]);
+    expectNoGaps(next);
+  });
+
+  it("is a no-op for an unknown id or an empty list", () => {
+    const clips = twoClips();
+    expect(deleteClipById(clips, "missing")).toBe(clips);
+    expect(deleteClipById([], "a")).toEqual([]);
+  });
+});
+
+describe("moveClip", () => {
+  const threeClips = [
+    clip("a", 0, 4, 0),
+    clip("b", 4, 2, 4),
+    clip("c", 6, 3, 6),
+  ];
+
+  it("moves a clip forward and re-flows the new order", () => {
+    expect(moveClip(threeClips, "a", 2)).toEqual([
+      clip("b", 0, 2, 4),
+      clip("c", 2, 3, 6),
+      clip("a", 5, 4, 0),
+    ]);
+  });
+
+  it("moves a clip backward and re-flows the new order", () => {
+    expect(moveClip(threeClips, "c", 0)).toEqual([
+      clip("c", 0, 3, 6),
+      clip("a", 3, 4, 0),
+      clip("b", 7, 2, 4),
+    ]);
+  });
+
+  it("keeps the same array for a no-op, an unknown id, or a clamped slot", () => {
+    expect(moveClip(threeClips, "b", 1)).toBe(threeClips);
+    expect(moveClip(threeClips, "missing", 2)).toBe(threeClips);
+    expect(moveClip(threeClips, "a", -10)).toBe(threeClips);
+    expect(moveClip(threeClips, "c", 99)).toBe(threeClips);
+  });
+
+  it("never leaves a gap in any order", () => {
+    for (const id of ["a", "b", "c"]) {
+      for (let slot = 0; slot < threeClips.length; slot += 1) {
+        expectNoGaps(moveClip(threeClips, id, slot));
+      }
+    }
   });
 });
 

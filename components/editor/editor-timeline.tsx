@@ -24,6 +24,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type KeyboardEvent,
   type PointerEvent,
   type RefObject,
@@ -64,8 +65,12 @@ export interface EditorTimelineProps {
     trackId: string,
     patch: Partial<Pick<EditorTrack, "muted" | "hidden">>,
   ) => void;
-  /** Applies a clip edit at the given timeline time. */
+  /** Applies a playhead-anchored clip edit at the given timeline time. */
   onClipEdit: (action: ClipEditAction, time: number) => void;
+  /** Removes one clip by id, selected or under the playhead. */
+  onDeleteClip: (clipId: string) => void;
+  /** Moves one clip to a slot in the remaining order. */
+  onMoveClip: (clipId: string, slot: number) => void;
   clipLabel: string;
   /** The one `<video>` element both the preview and the timeline drive. */
   videoRef: RefObject<HTMLVideoElement | null>;
@@ -74,29 +79,49 @@ export interface EditorTimelineProps {
 function TrackHeader({
   track,
   onChange,
+  onSelect,
+  selected,
   clipCount,
 }: {
   track: EditorTrack;
   onChange: EditorTimelineProps["onTrackChange"];
+  onSelect: (trackId: string) => void;
+  selected: boolean;
   clipCount: number;
 }) {
   const isVideo = track.type === "video";
   const TypeIcon = isVideo ? Film : Music;
 
   return (
-    <div className="flex h-16 shrink-0 items-center gap-1.5 border-b px-2">
-      <span className="bg-muted grid size-6 shrink-0 place-items-center rounded">
-        <TypeIcon className="size-3.5" aria-hidden="true" />
-      </span>
+    <div
+      className={cn(
+        "flex h-16 shrink-0 items-center gap-1.5 border-b px-2",
+        selected && "bg-accent/40",
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => onSelect(track.id)}
+        aria-pressed={selected}
+        aria-label={`Select ${isVideo ? "video" : "audio"} track`}
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          selected && "text-foreground",
+        )}
+      >
+        <span className="bg-muted grid size-6 shrink-0 place-items-center rounded">
+          <TypeIcon className="size-3.5" aria-hidden="true" />
+        </span>
 
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium">
-          {isVideo ? "Video" : "Audio"}
-        </p>
-        <p className="text-muted-foreground text-[10px]">
-          {clipCount} {clipCount === 1 ? "clip" : "clips"}
-        </p>
-      </div>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs font-medium">
+            {isVideo ? "Video" : "Audio"}
+          </span>
+          <span className="text-muted-foreground block text-[10px]">
+            {clipCount} {clipCount === 1 ? "clip" : "clips"}
+          </span>
+        </span>
+      </button>
 
       <Button
         type="button"
@@ -150,6 +175,8 @@ export function EditorTimeline({
   tracks,
   onTrackChange,
   onClipEdit,
+  onDeleteClip,
+  onMoveClip,
   clipLabel,
   videoRef,
 }: EditorTimelineProps) {
@@ -168,6 +195,7 @@ export function EditorTimeline({
     seekTo,
     step,
     toggle,
+    pause,
     zoomTo,
     zoomIn,
     zoomOut,
@@ -175,6 +203,27 @@ export function EditorTimeline({
     resetZoom,
     markManual,
   } = timeline;
+
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  const [drag, setDrag] = useState<{
+    clipId: string;
+    dx: number;
+    x: number;
+    slot: number;
+  } | null>(null);
+
+  const dragRef = useRef<{
+    clipId: string;
+    pointerId: number;
+    startX: number;
+    active: boolean;
+  } | null>(null);
+
+  const selectedClip =
+    selectedClipId === null
+      ? null
+      : (clips.find((clip) => clip.id === selectedClipId) ?? null);
 
   const currentClip = clipAtTime(clips, time);
   const offset = clipOffsetAt(clips, time);
@@ -186,7 +235,166 @@ export function EditorTimeline({
   const canSplit = currentClip !== null && !atClipStart && !atClipEnd;
   const canDeleteLeft = currentClip !== null && !atClipStart;
   const canDeleteRight = currentClip !== null && !atClipEnd;
-  const canDeleteClip = currentClip !== null;
+  const deleteTarget = selectedClip ?? currentClip;
+  const canDeleteClip = deleteTarget !== null;
+
+  const selectClip = (clipId: string, trackId: string) => {
+    setSelectedClipId(clipId);
+    setSelectedTrackId(trackId);
+  };
+
+  const selectTrack = (trackId: string) => {
+    setSelectedTrackId(trackId);
+    setSelectedClipId(null);
+  };
+
+  const deleteSelectedClip = (clipId: string) => {
+    setSelectedClipId((current) => (current === clipId ? null : current));
+    onDeleteClip(clipId);
+  };
+
+  const laneTimeAt = (clientX: number): number | null => {
+    const lane = laneRef.current;
+    if (!lane || basePxPerSec === null) return null;
+
+    const rect = lane.getBoundingClientRect();
+    return xToTime(clientX - rect.left, { level, scrollX }, basePxPerSec);
+  };
+
+  /**
+   * The slot a dragged clip would occupy after it is removed. Counting the
+   * midpoints of the clips that stay is what makes a drop between two clips
+   * unambiguous, and it matches `moveClip`'s "slot in the remaining order".
+   */
+  const slotForClipAt = (clipId: string, clientX: number): number => {
+    const pointerTime = laneTimeAt(clientX);
+    if (pointerTime === null) return 0;
+
+    let slot = 0;
+    for (const clip of clips) {
+      if (clip.id === clipId) continue;
+      if (clip.start + clip.duration / 2 < pointerTime) slot += 1;
+    }
+    return slot;
+  };
+
+  const handleClipPointerDown = (
+    event: PointerEvent<HTMLDivElement>,
+    clipId: string,
+    trackId: string,
+  ) => {
+    if (event.button !== 0) return;
+
+    event.stopPropagation();
+    event.currentTarget.focus({ preventScroll: true });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    selectClip(clipId, trackId);
+
+    /* Keep the click-to-scrub behaviour the lane had before clips became
+     * interactive: pressing on a clip parks the playhead at the pointer, but
+     * never outside the clip that was pressed. */
+    const pressed = clips.find((clip) => clip.id === clipId);
+    const at = laneTimeAt(event.clientX);
+    if (pressed && at !== null) {
+      seekTo(
+        Math.min(Math.max(at, pressed.start), pressed.start + pressed.duration),
+      );
+    }
+
+    dragRef.current = {
+      clipId,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      active: false,
+    };
+  };
+
+  const handleClipPointerMove = (
+    event: PointerEvent<HTMLDivElement>,
+    clipId: string,
+  ) => {
+    const current = dragRef.current;
+    if (!current || current.clipId !== clipId) return;
+
+    const dx = event.clientX - current.startX;
+    if (!current.active) {
+      if (Math.abs(dx) < 4) return;
+      current.active = true;
+      /* Reordering while the preview keeps playing makes the target move under
+       * the pointer. Stop the clock, but leave the playhead where it was. */
+      pause();
+      markManual();
+    }
+
+    event.stopPropagation();
+    const lane = laneRef.current;
+    const rect = lane?.getBoundingClientRect();
+    setDrag({
+      clipId,
+      dx,
+      x: rect ? event.clientX - rect.left : 0,
+      slot: slotForClipAt(clipId, event.clientX),
+    });
+  };
+
+  const handleClipPointerUp = (
+    event: PointerEvent<HTMLDivElement>,
+    clipId: string,
+  ) => {
+    const current = dragRef.current;
+    if (!current || current.clipId !== clipId) return;
+
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    dragRef.current = null;
+
+    if (current.active) {
+      onMoveClip(clipId, slotForClipAt(clipId, event.clientX));
+    }
+
+    setDrag(null);
+  };
+
+  const handleClipPointerCancel = (event: PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current === null) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    dragRef.current = null;
+    setDrag(null);
+  };
+
+  const handleClipKeyDown = (
+    event: KeyboardEvent<HTMLDivElement>,
+    clipId: string,
+    trackId: string,
+  ) => {
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteSelectedClip(clipId);
+      return;
+    }
+
+    if (event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const index = clips.findIndex((clip) => clip.id === clipId);
+      if (index < 0) return;
+      onMoveClip(clipId, index + (event.key === "ArrowLeft" ? -1 : 1));
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      event.stopPropagation();
+      selectClip(clipId, trackId);
+    }
+  };
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const draggingRef = useRef(false);
@@ -295,6 +503,28 @@ export function EditorTimeline({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const key = event.key;
+
+    if (
+      (key === "Delete" || key === "Backspace") &&
+      deleteTarget !== null
+    ) {
+      event.preventDefault();
+      deleteSelectedClip(deleteTarget.id);
+      return;
+    }
+
+    if (
+      event.altKey &&
+      selectedClip !== null &&
+      (key === "ArrowLeft" || key === "ArrowRight")
+    ) {
+      event.preventDefault();
+      const index = clips.findIndex((clip) => clip.id === selectedClip.id);
+      if (index >= 0) {
+        onMoveClip(selectedClip.id, index + (key === "ArrowLeft" ? -1 : 1));
+      }
+      return;
+    }
 
     if (key === "ArrowLeft") {
       event.preventDefault();
@@ -435,10 +665,12 @@ export function EditorTimeline({
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label="Delete clip"
-            title="Delete clip"
+            aria-label="Delete selected clip"
+            title="Delete selected clip"
             disabled={!canDeleteClip}
-            onClick={() => onClipEdit("delete-clip", time)}
+            onClick={() => {
+              if (deleteTarget) deleteSelectedClip(deleteTarget.id);
+            }}
           >
             <Trash2 aria-hidden="true" />
           </Button>
@@ -512,6 +744,8 @@ export function EditorTimeline({
               key={track.id}
               track={track}
               onChange={onTrackChange}
+              onSelect={selectTrack}
+              selected={selectedTrackId === track.id}
               clipCount={track.clips.length}
             />
           ))}
@@ -519,20 +753,27 @@ export function EditorTimeline({
 
         <div
           ref={laneRef}
-          role="slider"
-          tabIndex={0}
-          aria-label="Timeline playhead"
-          aria-valuemin={0}
-          aria-valuemax={Math.round(duration)}
-          aria-valuenow={Math.min(Math.round(time), Math.round(duration))}
-          aria-valuetext={formatTimecode(time)}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
-          onKeyDown={handleKeyDown}
-          className="relative min-w-0 flex-1 cursor-crosshair touch-none overflow-hidden outline-none select-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          className="relative min-w-0 flex-1 touch-none overflow-hidden select-none"
         >
+          {/* The scrub surface sits beneath the clips: a drag on empty lane
+           * moves the playhead, a drag on a clip reorders it. Splitting the
+           * two layers keeps the slider semantics on one element without
+           * nesting interactive clip buttons inside it. */}
+          <div
+            role="slider"
+            tabIndex={0}
+            aria-label="Timeline playhead"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(duration)}
+            aria-valuenow={Math.min(Math.round(time), Math.round(duration))}
+            aria-valuetext={formatTimecode(time)}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            onKeyDown={handleKeyDown}
+            className="absolute inset-0 z-0 cursor-crosshair outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          />
           <canvas
             ref={canvasRef}
             className="pointer-events-none absolute top-0 left-0 h-8 w-full"
@@ -557,48 +798,90 @@ export function EditorTimeline({
           {tracks.map((track, index) => (
             <div
               key={track.id}
-              className="absolute inset-x-0 border-b bg-white/[0.015]"
+              className={cn(
+                "pointer-events-none absolute inset-x-0 border-b",
+                selectedTrackId === track.id ? "bg-white/[0.035]" : "bg-white/[0.015]",
+              )}
               style={{
                 top: RULER_HEIGHT + index * TRACK_HEIGHT,
                 height: TRACK_HEIGHT,
               }}
             >
               {basePxPerSec !== null
-                ? track.clips.map((clip) => (
-                    <div
-                      key={clip.id}
-                      className="pointer-events-none absolute top-2 bottom-2 overflow-hidden rounded-md border border-primary/40 bg-primary/10"
-                      style={{
-                        left: timeToX(clip.start, viewport, basePxPerSec),
-                        width: Math.max(clip.duration * pxPerSecond, 2),
-                      }}
-                    >
-                      <div className="absolute inset-0 bg-gradient-to-r from-primary/20 via-primary/10 to-primary/20" />
-                      {frameGrid ? (
-                        <div
-                          className="absolute inset-0"
-                          style={{ backgroundImage: frameGrid }}
-                          aria-hidden="true"
-                        />
-                      ) : null}
+                ? track.clips.map((clip, clipIndex) => {
+                    const isDragging = drag?.clipId === clip.id;
+                    const isSelected = selectedClipId === clip.id;
 
-                      <div className="relative flex h-full items-center gap-1.5 px-2">
-                        <Film
-                          className="text-primary size-3.5 shrink-0"
-                          aria-hidden="true"
-                        />
-                        <span className="truncate text-[11px] font-medium">
-                          {clipLabel}
-                        </span>
-                        <span className="text-muted-foreground ml-auto shrink-0 font-mono text-[10px]">
-                          {formatTimecode(clip.duration)}
-                        </span>
+                    return (
+                      <div
+                        key={clip.id}
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={isSelected}
+                        aria-label={`${clipLabel}, clip ${clipIndex + 1}, ${formatTimecode(clip.duration)}`}
+                        onPointerDown={(event) =>
+                          handleClipPointerDown(event, clip.id, track.id)
+                        }
+                        onPointerMove={(event) =>
+                          handleClipPointerMove(event, clip.id)
+                        }
+                        onPointerUp={(event) =>
+                          handleClipPointerUp(event, clip.id)
+                        }
+                        onPointerCancel={handleClipPointerCancel}
+                        onKeyDown={(event) =>
+                          handleClipKeyDown(event, clip.id, track.id)
+                        }
+                        className={cn(
+                          "pointer-events-auto absolute top-2 bottom-2 touch-none cursor-grab overflow-hidden rounded-md border bg-primary/10 outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          isSelected
+                            ? "border-primary ring-1 ring-primary"
+                            : "border-primary/40",
+                          isDragging &&
+                            "z-30 cursor-grabbing border-primary opacity-90 shadow-lg shadow-black/40",
+                        )}
+                        style={{
+                          left:
+                            timeToX(clip.start, viewport, basePxPerSec) +
+                            (isDragging && drag ? drag.dx : 0),
+                          width: Math.max(clip.duration * pxPerSecond, 2),
+                        }}
+                      >
+                        <div className="absolute inset-0 bg-gradient-to-r from-primary/20 via-primary/10 to-primary/20" />
+                        {frameGrid ? (
+                          <div
+                            className="absolute inset-0"
+                            style={{ backgroundImage: frameGrid }}
+                            aria-hidden="true"
+                          />
+                        ) : null}
+
+                        <div className="relative flex h-full items-center gap-1.5 px-2">
+                          <Film
+                            className="text-primary size-3.5 shrink-0"
+                            aria-hidden="true"
+                          />
+                          <span className="truncate text-[11px] font-medium">
+                            {clipLabel}
+                          </span>
+                          <span className="text-muted-foreground ml-auto shrink-0 font-mono text-[10px]">
+                            {formatTimecode(clip.duration)}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 : null}
             </div>
           ))}
+
+          {drag ? (
+            <div
+              className="pointer-events-none absolute z-20 w-0.5 -translate-x-1/2 bg-primary"
+              style={{ left: drag.x, top: RULER_HEIGHT, bottom: 0 }}
+              aria-hidden="true"
+            />
+          ) : null}
 
           {basePxPerSec !== null && frameBand ? (
             <div
