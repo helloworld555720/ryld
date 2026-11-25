@@ -21,9 +21,10 @@ import {
   type TimelineViewport,
 } from "@/lib/timeline";
 import {
+  clipIndexAt,
   remapPlayhead,
   sequenceDuration,
-  sourceToTimeline,
+  stepPlayback,
   timelineToSource,
   type EditorClip,
 } from "@/lib/editor";
@@ -110,6 +111,8 @@ export function useTimeline(
   const durationRef = useRef(duration);
   const clipsRef = useRef(clips);
   const prevClipsRef = useRef(clips);
+  /** The clip playback is in. Playback walks the edit in timeline order. */
+  const playIndexRef = useRef(0);
   const baseRef = useRef(0);
   const seekingRef = useRef(false);
   const pendingSeekRef = useRef<number | null>(null);
@@ -248,6 +251,7 @@ export function useTimeline(
     (raw: number) => {
       const next = snapTime(raw, durationRef.current);
       timeRef.current = next;
+      playIndexRef.current = Math.max(0, clipIndexAt(clipsRef.current, next));
       setTime(next);
 
       const video = videoRef.current;
@@ -281,6 +285,10 @@ export function useTimeline(
     } else {
       /* Starting mid-sequence must not resume the source where it was before
        * an edit: map the playhead first, then let playback run. */
+      playIndexRef.current = Math.max(
+        0,
+        clipIndexAt(clipsRef.current, timeRef.current),
+      );
       const source = timelineToSource(clipsRef.current, timeRef.current);
       if (
         source !== null &&
@@ -469,12 +477,18 @@ export function useTimeline(
 
       if (video && !seekingRef.current) {
         /*
-         * The element's clock is source time. The timeline is the edit: map the
-         * source back through the surviving clips, and when it lands in a
-         * region an edit removed, jump the element to the next clip instead of
-         * showing (or silently playing) what was cut out.
+         * The element's clock is source time. The timeline is the edit, so
+         * playback walks the clips in timeline order from the clip it is in:
+         * a split flows straight on, and a cut that skips source is jumped on
+         * the clip's last frame, before the removed footage can play.
          */
-        const mapped = sourceToTimeline(clipsRef.current, video.currentTime);
+        const mapped = stepPlayback(
+          clipsRef.current,
+          playIndexRef.current,
+          video.currentTime,
+          1 / FPS,
+        );
+        playIndexRef.current = mapped.index;
 
         if (mapped.ended || video.ended) {
           video.pause();
@@ -534,6 +548,7 @@ export function useTimeline(
       timeRef.current = next;
       setTime(next);
     }
+    playIndexRef.current = Math.max(0, clipIndexAt(clips, next));
 
     const target = remapped.seek ?? timelineToSource(clips, next);
     if (

@@ -423,53 +423,157 @@ export function timelineToSource(
   return null;
 }
 
-export interface SourceTimelineResult {
+export interface PlaybackStep {
+  /** The clip the media is playing now, so the next step knows where to resume. */
+  index: number;
   /** Where the timeline playhead belongs. */
   time: number;
-  /** A source time to seek to when the media is in a removed region. */
+  /** A source time to jump to at a cut that skips source, otherwise `null`. */
   seek: number | null;
-  /** True once the source has passed the last clip's source range. */
+  /** True once the media reaches the last frame of the last clip. */
   ended: boolean;
 }
 
-/**
- * Source time → timeline time, used while the media is playing.
- *
- * A source time inside a clip maps directly. A source time in a removed region
- * returns the next clip and the source offset to jump to, which is the cut.
- * Past the last clip's source range the sequence is over, even if the media
- * itself has more content.
- */
-export function sourceToTimeline(
+/** Index of the clip whose source range holds `sourceTime`, nearest to `from`. */
+function clipHoldingSource(
   clips: readonly EditorClip[],
   sourceTime: number,
-): SourceTimelineResult {
-  if (clips.length === 0) {
-    return { time: 0, seek: null, ended: true };
+  from: number,
+): number {
+  let best = -1;
+
+  for (let index = 0; index < clips.length; index += 1) {
+    const clip = clips[index];
+    const inside =
+      sourceTime >= clip.sourceOffset - CLIP_EPSILON &&
+      sourceTime < clip.sourceOffset + clip.duration - CLIP_EPSILON;
+
+    if (inside && (best < 0 || Math.abs(index - from) < Math.abs(best - from))) {
+      best = index;
+    }
   }
+
+  return best;
+}
+
+/**
+ * One playback tick: where the media is, in source time, mapped onto the edit.
+ *
+ * Playback follows the clips **in timeline order** from the clip it is already
+ * in (`index`); it never searches the source for "whichever clip shows this
+ * second". Searching breaks as soon as clips are reordered, because source
+ * order and timeline order differ: playback would stop at the end of whichever
+ * clip is last in the source, or jump back to an earlier clip.
+ *
+ * - Inside a clip the source maps directly onto the timeline.
+ * - At a boundary whose next clip continues the same source (a plain split)
+ *   playback just flows on: no seek, so the cut is seamless.
+ * - At a boundary that skips source (a delete, a reorder) the jump is made on
+ *   the clip's **last frame** (`frame` seconds before its end), so the removed
+ *   footage and its audio never start to play.
+ * - If the media is not inside the current clip (a scrub, an edit, a late
+ *   seek), playback re-syncs to the clip that holds it, nearest first.
+ */
+export function stepPlayback(
+  clips: readonly EditorClip[],
+  index: number,
+  sourceTime: number,
+  frame: number,
+): PlaybackStep {
+  if (clips.length === 0) {
+    return { index: 0, time: 0, seek: null, ended: true };
+  }
+
+  const last = clips.length - 1;
+  let at = Math.min(Math.max(Number.isInteger(index) ? index : 0, 0), last);
 
   if (!Number.isFinite(sourceTime)) {
-    return { time: 0, seek: clips[0].sourceOffset, ended: false };
+    return {
+      index: at,
+      time: clips[at].start,
+      seek: clips[at].sourceOffset,
+      ended: false,
+    };
   }
 
-  for (const clip of clips) {
-    const start = clip.sourceOffset;
-    const end = start + clip.duration;
-    if (sourceTime >= start - CLIP_EPSILON && sourceTime < end - CLIP_EPSILON) {
+  const current = clips[at];
+  const currentEnd = current.sourceOffset + current.duration;
+  const inCurrent =
+    sourceTime >= current.sourceOffset - CLIP_EPSILON &&
+    sourceTime < currentEnd + CLIP_EPSILON;
+
+  if (!inCurrent) {
+    const holder = clipHoldingSource(clips, sourceTime, at);
+
+    if (holder >= 0) {
+      at = holder;
+    } else if (sourceTime < current.sourceOffset) {
+      /* Before the clip, in footage an edit removed: go to the clip's start. */
       return {
-        time: clip.start + Math.max(0, sourceTime - start),
-        seek: null,
+        index: at,
+        time: current.start,
+        seek: current.sourceOffset,
         ended: false,
+      };
+    } else if (at < last) {
+      /* Past the clip, in removed footage: the next clip in the edit is next. */
+      const following = clips[at + 1];
+      return {
+        index: at + 1,
+        time: following.start,
+        seek: following.sourceOffset,
+        ended: false,
+      };
+    } else {
+      return {
+        index: at,
+        time: sequenceDuration(clips),
+        seek: null,
+        ended: true,
       };
     }
   }
 
-  const following = clips.find((clip) => clip.sourceOffset > sourceTime);
-  if (following) {
-    return { time: following.start, seek: following.sourceOffset, ended: false };
-  }
+  for (;;) {
+    const clip = clips[at];
+    const end = clip.sourceOffset + clip.duration;
+    const remaining = end - sourceTime;
+    const next = clips[at + 1];
+    const contiguous =
+      next !== undefined && Math.abs(next.sourceOffset - end) <= CLIP_EPSILON;
 
-  return { time: sequenceDuration(clips), seek: null, ended: true };
+    if (contiguous && remaining <= CLIP_EPSILON) {
+      at += 1;
+      continue;
+    }
+
+    if (contiguous || remaining > frame + CLIP_EPSILON) {
+      return {
+        index: at,
+        time:
+          clip.start +
+          Math.min(Math.max(sourceTime - clip.sourceOffset, 0), clip.duration),
+        seek: null,
+        ended: false,
+      };
+    }
+
+    if (next) {
+      return {
+        index: at + 1,
+        time: next.start,
+        seek: next.sourceOffset,
+        ended: false,
+      };
+    }
+
+    return {
+      index: at,
+      time: sequenceDuration(clips),
+      seek: null,
+      ended: true,
+    };
+  }
 }
 
 export interface PlayheadRemap {
@@ -481,11 +585,10 @@ export interface PlayheadRemap {
 
 /**
  * Maps a playhead from one clip list to the next, keeping the **frame**, not the
- * old timeline coordinate. Removing the head of a clip moves that frame to the
- * clip's new start; deleting the clip under the playhead lands on the next
- * surviving clip; deleting the tail leaves the playhead at the cut; deleting
- * earlier material pulls the playhead left with the ripple. Returns `seek` only
- * when the old source frame was removed.
+ * old timeline coordinate. A frame that survives only moves with its clip
+ * (a head trim, an earlier delete, a reorder). A frame that was removed lands
+ * on the first surviving clip that **followed it in the previous order**, or at
+ * the end when nothing followed. Returns `seek` only when the old frame is gone.
  */
 export function remapPlayhead(
   previous: readonly EditorClip[],
@@ -502,8 +605,19 @@ export function remapPlayhead(
     };
   }
 
-  const mapped = sourceToTimeline(next, oldSource);
-  if (mapped.ended) return { time: end, seek: null };
+  const holder = clipHoldingSource(next, oldSource, 0);
+  if (holder >= 0) {
+    return {
+      time: next[holder].start + Math.max(0, oldSource - next[holder].sourceOffset),
+      seek: null,
+    };
+  }
 
-  return { time: mapped.time, seek: mapped.seek };
+  const survivors = new Map(next.map((clip) => [clip.id, clip]));
+  for (let index = clipIndexAt(previous, time) + 1; index < previous.length; index += 1) {
+    const survivor = survivors.get(previous[index].id);
+    if (survivor) return { time: survivor.start, seek: survivor.sourceOffset };
+  }
+
+  return { time: end, seek: null };
 }

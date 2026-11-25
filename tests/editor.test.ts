@@ -13,8 +13,8 @@ import {
   reflowClips,
   remapPlayhead,
   sequenceDuration,
-  sourceToTimeline,
   splitClip,
+  stepPlayback,
   timelineDuration,
   timelineToSource,
   updateVideoClips,
@@ -413,41 +413,113 @@ describe("timelineToSource", () => {
   });
 });
 
-describe("sourceToTimeline", () => {
+describe("stepPlayback", () => {
+  const FRAME = 1 / 30;
+  /* a shows source 0-4, b shows source 10-14: the cut between them skips 4-10. */
   const clips = [clip("a", 0, 4, 0), clip("b", 4, 4, 10)];
 
-  it("maps a source time that a clip still shows", () => {
-    expect(sourceToTimeline(clips, 2)).toEqual({
+  it("maps a source time inside the current clip", () => {
+    expect(stepPlayback(clips, 0, 2, FRAME)).toEqual({
+      index: 0,
       time: 2,
       seek: null,
       ended: false,
     });
-    expect(sourceToTimeline(clips, 12)).toEqual({
+    expect(stepPlayback(clips, 1, 12, FRAME)).toEqual({
+      index: 1,
       time: 6,
       seek: null,
       ended: false,
     });
   });
 
-  it("jumps over a source region that an edit removed", () => {
-    expect(sourceToTimeline(clips, 6)).toEqual({
+  it("jumps a cut that skips source on the clip's last frame, before it plays", () => {
+    expect(stepPlayback(clips, 0, 4 - FRAME, FRAME)).toEqual({
+      index: 1,
       time: 4,
       seek: 10,
       ended: false,
     });
   });
 
-  it("ends after the last clip's source range even if the media continues", () => {
-    expect(sourceToTimeline(clips, 14)).toEqual({
-      time: 8,
+  it("flows through a split without ever seeking", () => {
+    const split = splitClip([clip("a", 0, 8, 0)], 4, () => "a2");
+
+    expect(stepPlayback(split, 0, 4 - FRAME, FRAME)).toMatchObject({
+      index: 0,
+      seek: null,
+      ended: false,
+    });
+    expect(stepPlayback(split, 0, 4, FRAME)).toEqual({
+      index: 1,
+      time: 4,
+      seek: null,
+      ended: false,
+    });
+  });
+
+  it("ends on the last frame of the last clip", () => {
+    expect(stepPlayback(clips, 1, 14 - FRAME, FRAME)).toMatchObject({
+      index: 1,
       seek: null,
       ended: true,
     });
-    expect(sourceToTimeline(clips, 99).ended).toBe(true);
+    expect(stepPlayback(clips, 1, 13, FRAME).ended).toBe(false);
+  });
+
+  it("plays reordered clips in timeline order, not source order", () => {
+    /* b (source 10-14) now plays first, then a (source 0-4). */
+    const reordered = moveClip(clips, "b", 0);
+
+    expect(stepPlayback(reordered, 0, 12, FRAME)).toEqual({
+      index: 0,
+      time: 2,
+      seek: null,
+      ended: false,
+    });
+    expect(stepPlayback(reordered, 0, 14 - FRAME, FRAME)).toEqual({
+      index: 1,
+      time: 4,
+      seek: 0,
+      ended: false,
+    });
+    expect(stepPlayback(reordered, 1, 2, FRAME)).toEqual({
+      index: 1,
+      time: 6,
+      seek: null,
+      ended: false,
+    });
+    expect(stepPlayback(reordered, 1, 4 - FRAME, FRAME).ended).toBe(true);
+  });
+
+  it("re-syncs to the clip that holds the media after a scrub or an edit", () => {
+    expect(stepPlayback(clips, 0, 12, FRAME)).toEqual({
+      index: 1,
+      time: 6,
+      seek: null,
+      ended: false,
+    });
+  });
+
+  it("moves on when the media is in source that an edit removed", () => {
+    expect(stepPlayback(clips, 0, 6, FRAME)).toEqual({
+      index: 1,
+      time: 4,
+      seek: 10,
+      ended: false,
+    });
+    expect(stepPlayback(clips, 1, 6, FRAME)).toEqual({
+      index: 1,
+      time: 4,
+      seek: 10,
+      ended: false,
+    });
+    expect(stepPlayback(clips, 1, 20, FRAME).ended).toBe(true);
   });
 
   it("starts an empty sequence at zero and treats it as ended", () => {
-    expect(sourceToTimeline([], 3)).toEqual({
+    expect(stepPlayback([], 0, 3, FRAME)).toEqual({
+      index: 0,
       time: 0,
       seek: null,
       ended: true,
@@ -490,5 +562,23 @@ describe("remapPlayhead", () => {
 
   it("is zero when every clip is gone", () => {
     expect(remapPlayhead(clips, [], 4)).toEqual({ time: 0, seek: null });
+  });
+
+  it("keeps the frame when clips are reordered", () => {
+    const original = [clip("a", 0, 4, 0), clip("b", 4, 4, 10)];
+    const reordered = moveClip(original, "b", 0);
+
+    expect(remapPlayhead(original, reordered, 5)).toEqual({ time: 1, seek: null });
+  });
+
+  it("lands at the end, not the start, when nothing followed the deleted clip", () => {
+    const reordered = moveClip(
+      [clip("a", 0, 4, 0), clip("b", 4, 4, 10)],
+      "b",
+      0,
+    );
+    const next = deleteClipAt(reordered, 5);
+
+    expect(remapPlayhead(reordered, next, 5)).toEqual({ time: 4, seek: null });
   });
 });
