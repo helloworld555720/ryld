@@ -167,14 +167,17 @@ Server Components ──▶ lib/api/server.ts ──▶ API service (same token 
   of overscrolling. The ruler is a canvas of visible ticks only (no per-frame DOM), the slider
   is linear in `level` so each doubling takes the same distance, and plain/shift wheel pans
   while Ctrl/Cmd + wheel zooms continuously. While playing, `requestAnimationFrame` maps
-  `video.currentTime` (source time) back through the clips with `sourceToTimeline`; a source
-  position inside a region an edit removed becomes a seek to the next surviving clip, so
-  playback crosses cuts without showing them. Scrubbing and stepping go the other way
-  (`timelineToSource`); seeks are coalesced to one in flight and the read-back is suppressed
-  until `seeked`. Clip edits are pure model operations (`splitClip`, `deleteLeftAt`,
-  `deleteRightAt`, `deleteClipAt`) and every result is re-flowed from zero, so the timeline
-  never has a gap and the scale computed from the original duration does not jump on each
-  edit. The toolbar splits at the playhead and deletes left of it, right of it, or the whole
+  `video.currentTime` (source time) and hands it to `stepPlayback`, which walks the clips in
+  timeline order from the clip it is already in: a split flows on with no seek, and a cut
+  jumps on the clip's last frame so removed footage never plays. Scrubbing and stepping go the
+  other way (`timelineToSource`); seeks are coalesced to one in flight and the read-back is
+  suppressed until `seeked`. Clip edits are pure model operations (`splitClip`, `deleteLeftAt`,
+  `deleteRightAt`, `deleteClipAt`, `deleteClipById`, `moveClip`) and every result is
+  re-flowed from zero, so the timeline never has a gap and the scale computed from the
+  original duration does not jump on each edit. A clip is a focusable button: clicking it
+  selects it and parks the playhead inside it, `Delete` removes it, Alt + arrow moves it, and
+  dragging it reorders the sequence with the other clips sliding into their post-drop places.
+  The toolbar splits at the playhead and deletes left of it, right of it, or the selected
   clip. Nothing renders or exports the media: the only real playback is the project's HLS in
   the preview. Preview and playhead share the same element and Video.js store (`usePlayer`);
   mute is a `muted` prop on the media element (the store throws `NO_TARGET` before the media
@@ -742,17 +745,25 @@ those files; re-run the CLI instead.
 - **2026-11-26** — Added **clip editing** to the editor (branch `feat/clip-edits`): split at the
   playhead, delete left, delete right, and delete the whole clip, driven by three bracket-style
   toolbar icons plus a trash control. The operations are pure functions in `lib/editor.ts`
-  (`splitClip`, `deleteLeftAt`, `deleteRightAt`, `deleteClipAt`) that return a new clip list
-  re-flowed from zero, so a ripple can never leave a gap; a left trim advances `sourceOffset`
-  by the removed amount, a split gives the right half a fresh interaction-time id, and a no-op
-  (a boundary, an empty list) returns the original array untouched. `useTimeline` now takes the
-  clip list: the sequence duration comes from the cuts, not the media, while `basePxPerSec`
-  still comes from the original duration so editing never rescales the view. Seeking maps
-  timeline time through `timelineToSource`; playback maps the element's source time back
-  through `sourceToTimeline` and seeks over any region an edit removed, which is what makes
-  cuts play seamlessly. Splitting is a no-op at a clip boundary; delete left/right delete the
-  clip when the playhead sits on its far edge. `bun run check` green with 251 tests; browser
-  verification was waived for this task.
+  (`splitClip`, `deleteLeftAt`, `deleteRightAt`, `deleteClipAt`, `deleteClipById`, `moveClip`)
+  that return a new clip list re-flowed from zero, so a ripple can never leave a gap; a left
+  trim advances `sourceOffset` by the removed amount, a split gives the right half a fresh
+  interaction-time id, and a no-op (a boundary, an empty list, or the same slot) returns the
+  original array untouched. `useTimeline` now takes the clip list: the sequence duration comes
+  from the cuts, not the media, while `basePxPerSec` still comes from the original duration so
+  editing never rescales the view. Seeking maps timeline time through `timelineToSource`;
+  playback reads the element's source time through `stepPlayback`, which walks the clips in
+  timeline order and jumps on the clip's last frame at a cut, so removed footage never plays.
+  After an edit, `remapPlayhead` keeps the **frame** under the playhead rather than its old
+  timeline coordinate, so a trim pulls it to the clip's new start and a delete lands it on the
+  next surviving clip. Splitting is a no-op at a clip boundary; delete left/right delete the
+  clip when the playhead sits on its far edge. Clips are selectable (a focusable button that
+  also parks the playhead inside the clip), the trash control and `Delete` remove the selected
+  clip through `deleteClipById`, and dragging reorders through `moveClip`: the dragged clip
+  follows the pointer, the rest slide into their post-drop starts, the slot comes from the
+  dragged clip's centre, and the lane auto-pans near either edge because `scrollX` is its only
+  scroll. Alt + arrow moves the selection one slot. `bun run check` green with 263 tests;
+  browser verification was waived for this task.
 
 ## 11. Deferred / follow-ups
 

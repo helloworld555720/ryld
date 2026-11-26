@@ -59,6 +59,10 @@ const RULER_HEIGHT = 32;
 /** One track row, and the matching track header height. */
 const TRACK_HEIGHT = 64;
 
+/** Lane-edge distance and step for auto-panning while a clip is dragged. */
+const DRAG_SCROLL_EDGE = 40;
+const DRAG_SCROLL_STEP = 18;
+
 export interface EditorTimelineProps {
   tracks: EditorTrack[];
   onTrackChange: (
@@ -201,6 +205,7 @@ export function EditorTimeline({
     zoomOut,
     zoomToFrame,
     resetZoom,
+    panBy,
     markManual,
   } = timeline;
 
@@ -208,8 +213,11 @@ export function EditorTimeline({
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [drag, setDrag] = useState<{
     clipId: string;
-    dx: number;
+    /** Pointer x in lane coordinates; the clip follows this minus its grab. */
     x: number;
+    /** Distance from the clip's left edge to where the pointer went down. */
+    grabOffset: number;
+    /** Slot in the remaining order the clip would land in. */
     slot: number;
   } | null>(null);
 
@@ -217,8 +225,14 @@ export function EditorTimeline({
     clipId: string;
     pointerId: number;
     startX: number;
+    grabOffset: number;
     active: boolean;
   } | null>(null);
+
+  /* A clip can disappear under a selection: delete-left can remove the
+   * selected id and a track update can replace the list. The id is kept (it is
+   * inert once no clip matches) and every consumer derives the live clip from
+   * `clips`, so a ghost id can never act as a selection. */
 
   const selectedClip =
     selectedClipId === null
@@ -253,27 +267,40 @@ export function EditorTimeline({
     onDeleteClip(clipId);
   };
 
-  const laneTimeAt = (clientX: number): number | null => {
+  const laneXAt = (clientX: number): number => {
     const lane = laneRef.current;
-    if (!lane || basePxPerSec === null) return null;
+    if (!lane) return 0;
+    return clientX - lane.getBoundingClientRect().left;
+  };
 
-    const rect = lane.getBoundingClientRect();
-    return xToTime(clientX - rect.left, { level, scrollX }, basePxPerSec);
+  const laneTimeAt = (clientX: number): number | null => {
+    if (basePxPerSec === null) return null;
+    return xToTime(laneXAt(clientX), { level, scrollX }, basePxPerSec);
   };
 
   /**
-   * The slot a dragged clip would occupy after it is removed. Counting the
-   * midpoints of the clips that stay is what makes a drop between two clips
-   * unambiguous, and it matches `moveClip`'s "slot in the remaining order".
+   * The slot a dragged clip would occupy after it is removed, computed from the
+   * dragged clip's projected **centre** rather than the pointer: a short clip
+   * dragged by its edge should not snap earlier than one dragged by its middle.
+   * Counting the remaining clips' midpoints matches `moveClip`'s "slot in the
+   * remaining order", and it is what the live preview below uses too.
    */
-  const slotForClipAt = (clipId: string, clientX: number): number => {
-    const pointerTime = laneTimeAt(clientX);
-    if (pointerTime === null) return 0;
+  const slotForDrag = (clipId: string, leftPx: number): number => {
+    const dragged = clips.find((clip) => clip.id === clipId);
+    if (!dragged || basePxPerSec === null) return 0;
+
+    const centre = xToTime(
+      leftPx + (dragged.duration * pxPerSecond) / 2,
+      { level, scrollX },
+      basePxPerSec,
+    );
 
     let slot = 0;
+    let end = 0;
     for (const clip of clips) {
       if (clip.id === clipId) continue;
-      if (clip.start + clip.duration / 2 < pointerTime) slot += 1;
+      if (centre > end + clip.duration / 2) slot += 1;
+      end += clip.duration;
     }
     return slot;
   };
@@ -305,6 +332,11 @@ export function EditorTimeline({
       clipId,
       pointerId: event.pointerId,
       startX: event.clientX,
+      grabOffset:
+        pressed && basePxPerSec !== null
+          ? laneXAt(event.clientX) -
+            timeToX(pressed.start, viewport, basePxPerSec)
+          : 0,
       active: false,
     };
   };
@@ -327,13 +359,27 @@ export function EditorTimeline({
     }
 
     event.stopPropagation();
+
     const lane = laneRef.current;
-    const rect = lane?.getBoundingClientRect();
+    if (!lane) return;
+
+    const rect = lane.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+
+    /* Pan when the pointer nears either edge. The lane has no native scroll —
+     * `scrollX` is the only one — so a long sequence would otherwise be
+     * impossible to reorder in one drag. */
+    if (event.clientX < rect.left + DRAG_SCROLL_EDGE) {
+      panBy(-DRAG_SCROLL_STEP);
+    } else if (event.clientX > rect.right - DRAG_SCROLL_EDGE) {
+      panBy(DRAG_SCROLL_STEP);
+    }
+
     setDrag({
       clipId,
-      dx,
-      x: rect ? event.clientX - rect.left : 0,
-      slot: slotForClipAt(clipId, event.clientX),
+      x,
+      grabOffset: current.grabOffset,
+      slot: slotForDrag(clipId, Math.max(0, x - current.grabOffset)),
     });
   };
 
@@ -352,7 +398,11 @@ export function EditorTimeline({
     dragRef.current = null;
 
     if (current.active) {
-      onMoveClip(clipId, slotForClipAt(clipId, event.clientX));
+      const x = laneXAt(event.clientX);
+      onMoveClip(
+        clipId,
+        slotForDrag(clipId, Math.max(0, x - current.grabOffset)),
+      );
     }
 
     setDrag(null);
@@ -386,6 +436,14 @@ export function EditorTimeline({
       const index = clips.findIndex((clip) => clip.id === clipId);
       if (index < 0) return;
       onMoveClip(clipId, index + (event.key === "ArrowLeft" ? -1 : 1));
+      return;
+    }
+
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      event.stopPropagation();
+      const direction = event.key === "ArrowLeft" ? -1 : 1;
+      step(direction * (event.shiftKey ? 10 : 1));
       return;
     }
 
@@ -561,6 +619,32 @@ export function EditorTimeline({
   const endShadeX = Math.max(0, endX);
 
   /*
+   * While a clip is dragged, the other clips slide into the order they would
+   * take on drop. The preview is computed in sequence seconds, not pixels, so it
+   * stays correct at any zoom and while the lane auto-pans under the pointer.
+   */
+  const dragPreview = (() => {
+    if (!drag) return null;
+    const dragged = clips.find((clip) => clip.id === drag.clipId);
+    if (!dragged) return null;
+
+    const others = clips.filter((clip) => clip.id !== drag.clipId);
+    const order = [
+      ...others.slice(0, drag.slot),
+      dragged,
+      ...others.slice(drag.slot),
+    ];
+
+    const starts = new Map<string, number>();
+    let acc = 0;
+    for (const clip of order) {
+      starts.set(clip.id, acc);
+      acc += clip.duration;
+    }
+    return starts;
+  })();
+
+  /*
    * `min-w-0` on the section is load-bearing. It is a grid item in the editor's
    * single grid column, and at high zoom the clip is tens of thousands of
    * pixels wide. Without it the column sizes to the content, the inspector is
@@ -665,8 +749,8 @@ export function EditorTimeline({
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label="Delete selected clip"
-            title="Delete selected clip"
+            aria-label="Delete clip"
+            title="Delete the selected clip, or the clip under the playhead"
             disabled={!canDeleteClip}
             onClick={() => {
               if (deleteTarget) deleteSelectedClip(deleteTarget.id);
@@ -811,6 +895,10 @@ export function EditorTimeline({
                 ? track.clips.map((clip, clipIndex) => {
                     const isDragging = drag?.clipId === clip.id;
                     const isSelected = selectedClipId === clip.id;
+                    const previewStart = dragPreview?.get(clip.id) ?? clip.start;
+                    const left = isDragging
+                      ? Math.max(0, drag.x - drag.grabOffset)
+                      : timeToX(previewStart, viewport, basePxPerSec);
 
                     return (
                       <div
@@ -819,6 +907,7 @@ export function EditorTimeline({
                         tabIndex={0}
                         aria-pressed={isSelected}
                         aria-label={`${clipLabel}, clip ${clipIndex + 1}, ${formatTimecode(clip.duration)}`}
+                        title="Drag to reorder. Delete removes this clip."
                         onPointerDown={(event) =>
                           handleClipPointerDown(event, clip.id, track.id)
                         }
@@ -839,11 +928,10 @@ export function EditorTimeline({
                             : "border-primary/40",
                           isDragging &&
                             "z-30 cursor-grabbing border-primary opacity-90 shadow-lg shadow-black/40",
+                          drag && !isDragging && "transition-[left] duration-100",
                         )}
                         style={{
-                          left:
-                            timeToX(clip.start, viewport, basePxPerSec) +
-                            (isDragging && drag ? drag.dx : 0),
+                          left,
                           width: Math.max(clip.duration * pxPerSecond, 2),
                         }}
                       >
@@ -874,14 +962,6 @@ export function EditorTimeline({
                 : null}
             </div>
           ))}
-
-          {drag ? (
-            <div
-              className="pointer-events-none absolute z-20 w-0.5 -translate-x-1/2 bg-primary"
-              style={{ left: drag.x, top: RULER_HEIGHT, bottom: 0 }}
-              aria-hidden="true"
-            />
-          ) : null}
 
           {basePxPerSec !== null && frameBand ? (
             <div
