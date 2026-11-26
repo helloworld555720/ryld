@@ -300,11 +300,6 @@ export function EditorTimeline({
     return clientX - lane.getBoundingClientRect().left;
   };
 
-  const laneTimeAt = (clientX: number): number | null => {
-    if (basePxPerSec === null) return null;
-    return xToTime(laneXAt(clientX), { level, scrollX }, basePxPerSec);
-  };
-
   /**
    * The slot a dragged clip would occupy after it is removed, computed from the
    * dragged clip's projected **centre** rather than the pointer: a short clip
@@ -344,16 +339,7 @@ export function EditorTimeline({
     event.currentTarget.setPointerCapture(event.pointerId);
     selectClip(clipId, trackId);
 
-    /* Keep the click-to-scrub behaviour the lane had before clips became
-     * interactive: pressing on a clip parks the playhead at the pointer, but
-     * never outside the clip that was pressed. */
     const pressed = clips.find((clip) => clip.id === clipId);
-    const at = laneTimeAt(event.clientX);
-    if (pressed && at !== null) {
-      seekTo(
-        Math.min(Math.max(at, pressed.start), pressed.start + pressed.duration),
-      );
-    }
 
     dragRef.current = {
       clipId,
@@ -863,10 +849,9 @@ export function EditorTimeline({
           id="timeline-lane"
           className="relative min-w-0 touch-none overflow-hidden select-none"
         >
-          {/* The scrub surface sits beneath the clips: a drag on empty lane
-           * moves the playhead, a drag on a clip reorders it. Splitting the
-           * two layers keeps the slider semantics on one element without
-           * nesting interactive clip buttons inside it. */}
+          {/* The scrub surface is the ruler strip only. The playhead moves
+           * when the ruler is pressed or dragged, never from the tracks or
+           * the clips, so reordering a clip cannot disturb it. */}
           <div
             role="slider"
             tabIndex={0}
@@ -880,7 +865,8 @@ export function EditorTimeline({
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
             onKeyDown={handleKeyDown}
-            className="absolute inset-0 z-0 cursor-normal outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            style={{ height: RULER_HEIGHT }}
+            className="absolute inset-x-0 top-0 z-0 cursor-normal outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
           />
           <canvas
             ref={canvasRef}
