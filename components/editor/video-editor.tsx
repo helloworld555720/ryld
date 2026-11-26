@@ -248,6 +248,7 @@ function EditorBody({ projectId, title, media }: VideoEditorProps) {
           onDeleteClip={deleteClip}
           onMoveClip={reorderClip}
           clipLabel={title}
+          media={media}
           videoRef={videoRef}
         />
       </div>

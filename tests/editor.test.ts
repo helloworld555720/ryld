@@ -266,8 +266,9 @@ describe("deleteClipAt", () => {
     expectNoGaps(next);
   });
 
-  it("removes the trim target when the sequence has only one clip", () => {
-    expect(deleteClipAt([clip("a", 0, 10, 0)], 5)).toEqual([]);
+  it("refuses to remove the only clip, so the track never empties", () => {
+    const clips = [clip("a", 0, 10, 0)];
+    expect(deleteClipAt(clips, 5)).toBe(clips);
     expect(deleteClipAt([], 5)).toEqual([]);
   });
 });
@@ -278,6 +279,11 @@ describe("deleteClipById", () => {
 
     expect(next).toEqual([clip("b", 0, 4, 10)]);
     expectNoGaps(next);
+  });
+
+  it("refuses to remove the only clip, so the track never empties", () => {
+    const clips = [clip("a", 0, 10, 0)];
+    expect(deleteClipById(clips, "a")).toBe(clips);
   });
 
   it("is a no-op for an unknown id or an empty list", () => {
@@ -344,8 +350,10 @@ describe("deleteLeftAt", () => {
   });
 
   it("removes the clip when the playhead is at its end", () => {
-    expect(deleteLeftAt([clip("a", 0, 10, 0)], 10)).toEqual([]);
     expect(deleteLeftAt(twoClips(), 14)).toEqual([clip("a", 0, 10, 0)]);
+
+    const only = [clip("a", 0, 10, 0)];
+    expect(deleteLeftAt(only, 10)).toBe(only);
   });
 });
 
@@ -366,8 +374,10 @@ describe("deleteRightAt", () => {
   });
 
   it("removes the clip when the playhead is at its start", () => {
-    expect(deleteRightAt([clip("a", 0, 10, 0)], 0)).toEqual([]);
     expect(deleteRightAt(twoClips(), 10)).toEqual([clip("a", 0, 10, 0)]);
+
+    const only = [clip("a", 0, 10, 0)];
+    expect(deleteRightAt(only, 0)).toBe(only);
   });
 });
 

@@ -141,6 +141,20 @@ export function videoHidden(tracks: readonly EditorTrack[]): boolean {
 
 const CLIP_EPSILON = 1e-6;
 
+/**
+ * A sequence never becomes empty.
+ *
+ * Deleting the only clip would leave a track with nothing to play, draw or
+ * export, so the destructive operations below refuse to remove the last one.
+ * Trimming that last clip is still allowed: it stays one clip, just shorter.
+ */
+const MINIMUM_CLIPS = 1;
+
+/** False when the next delete would empty the sequence. */
+export function canDeleteClip(clips: readonly EditorClip[]): boolean {
+  return clips.length > MINIMUM_CLIPS;
+}
+
 /** The first video track. The editor only creates one today. */
 export function videoTrack(
   tracks: readonly EditorTrack[],
@@ -292,6 +306,8 @@ export function deleteClipAt(
   clips: readonly EditorClip[],
   time: number,
 ): EditorClip[] {
+  if (!canDeleteClip(clips)) return clips as EditorClip[];
+
   const index = clipIndexAt(clips, time);
   if (index < 0) return clips as EditorClip[];
 
@@ -303,6 +319,8 @@ export function deleteClipById(
   clips: readonly EditorClip[],
   id: string,
 ): EditorClip[] {
+  if (!canDeleteClip(clips)) return clips as EditorClip[];
+
   const index = clips.findIndex((clip) => clip.id === id);
   if (index < 0) return clips as EditorClip[];
 

@@ -31,15 +31,22 @@ import {
 } from "react";
 
 import { useTimeline } from "@/components/editor/use-timeline";
+import {
+  ClipThumbnails,
+  useStoryboard,
+} from "@/components/editor/clip-thumbnails";
+import { TimelineScrollbar } from "@/components/editor/timeline-scrollbar";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import {
+  canDeleteClip as sequenceCanDeleteClip,
   clipAtTime,
   clipOffsetAt,
   videoClips,
   type ClipEditAction,
   type EditorTrack,
 } from "@/lib/editor";
+import type { ProjectMedia } from "@/lib/media";
 import {
   FRAME_BAND_MIN_PX,
   FRAME_GRID_MIN_PX,
@@ -59,6 +66,9 @@ const RULER_HEIGHT = 32;
 /** One track row, and the matching track header height. */
 const TRACK_HEIGHT = 64;
 
+/** The clip inset: `top-2 bottom-2` inside its track row. */
+const CLIP_HEIGHT = TRACK_HEIGHT - 16;
+
 /** Lane-edge distance and step for auto-panning while a clip is dragged. */
 const DRAG_SCROLL_EDGE = 40;
 const DRAG_SCROLL_STEP = 18;
@@ -76,6 +86,8 @@ export interface EditorTimelineProps {
   /** Moves one clip to a slot in the remaining order. */
   onMoveClip: (clipId: string, slot: number) => void;
   clipLabel: string;
+  /** The project's media: the poster and storyboard feed the clip thumbnails. */
+  media: ProjectMedia;
   /** The one `<video>` element both the preview and the timeline drive. */
   videoRef: RefObject<HTMLVideoElement | null>;
 }
@@ -182,10 +194,12 @@ export function EditorTimeline({
   onDeleteClip,
   onMoveClip,
   clipLabel,
+  media,
   videoRef,
 }: EditorTimelineProps) {
   const clips = useMemo(() => videoClips(tracks), [tracks]);
   const timeline = useTimeline(videoRef, clips);
+  const storyboard = useStoryboard(media.thumbnails);
   const {
     laneRef,
     time,
@@ -206,6 +220,8 @@ export function EditorTimeline({
     zoomToFrame,
     resetZoom,
     panBy,
+    scrollTo,
+    maxScroll,
     markManual,
   } = timeline;
 
@@ -247,10 +263,19 @@ export function EditorTimeline({
     offset === null ||
     offset >= currentClip.duration - 1e-6;
   const canSplit = currentClip !== null && !atClipStart && !atClipEnd;
-  const canDeleteLeft = currentClip !== null && !atClipStart;
-  const canDeleteRight = currentClip !== null && !atClipEnd;
+  /* A single clip may be trimmed from an interior point, but deleting its
+   * whole body would empty the track; the toolbar disables that case. */
+  const canDeleteLeft =
+    currentClip !== null &&
+    !atClipStart &&
+    (clips.length > 1 || !atClipEnd);
+  const canDeleteRight =
+    currentClip !== null &&
+    !atClipEnd &&
+    (clips.length > 1 || !atClipStart);
   const deleteTarget = selectedClip ?? currentClip;
-  const canDeleteClip = deleteTarget !== null;
+  const canDeleteTarget =
+    deleteTarget !== null && sequenceCanDeleteClip(clips);
 
   const selectClip = (clipId: string, trackId: string) => {
     setSelectedClipId(clipId);
@@ -263,6 +288,8 @@ export function EditorTimeline({
   };
 
   const deleteSelectedClip = (clipId: string) => {
+    if (!sequenceCanDeleteClip(clips)) return;
+
     setSelectedClipId((current) => (current === clipId ? null : current));
     onDeleteClip(clipId);
   };
@@ -564,7 +591,8 @@ export function EditorTimeline({
 
     if (
       (key === "Delete" || key === "Backspace") &&
-      deleteTarget !== null
+      deleteTarget !== null &&
+      canDeleteTarget
     ) {
       event.preventDefault();
       deleteSelectedClip(deleteTarget.id);
@@ -751,7 +779,7 @@ export function EditorTimeline({
             size="icon-xs"
             aria-label="Delete clip"
             title="Delete the selected clip, or the clip under the playhead"
-            disabled={!canDeleteClip}
+            disabled={!canDeleteTarget}
             onClick={() => {
               if (deleteTarget) deleteSelectedClip(deleteTarget.id);
             }}
@@ -816,8 +844,8 @@ export function EditorTimeline({
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        <div className="flex w-44 shrink-0 flex-col border-r">
+      <div className="grid min-h-0 flex-1 grid-cols-[11rem_minmax(0,1fr)] grid-rows-[minmax(0,1fr)_auto]">
+        <div className="row-span-2 flex w-44 shrink-0 flex-col border-r">
           <div
             className="shrink-0 border-b"
             style={{ height: RULER_HEIGHT }}
@@ -837,7 +865,8 @@ export function EditorTimeline({
 
         <div
           ref={laneRef}
-          className="relative min-w-0 flex-1 touch-none overflow-hidden select-none"
+          id="timeline-lane"
+          className="relative min-w-0 touch-none overflow-hidden select-none"
         >
           {/* The scrub surface sits beneath the clips: a drag on empty lane
            * moves the playhead, a drag on a clip reorders it. Splitting the
@@ -856,7 +885,7 @@ export function EditorTimeline({
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
             onKeyDown={handleKeyDown}
-            className="absolute inset-0 z-0 cursor-crosshair outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            className="absolute inset-0 z-0 cursor-normal outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
           />
           <canvas
             ref={canvasRef}
@@ -922,12 +951,12 @@ export function EditorTimeline({
                           handleClipKeyDown(event, clip.id, track.id)
                         }
                         className={cn(
-                          "pointer-events-auto absolute top-2 bottom-2 touch-none cursor-grab overflow-hidden rounded-md border bg-primary/10 outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          "pointer-events-auto absolute top-2 bottom-2 touch-none cursor-normal overflow-hidden rounded-md border bg-primary/10 outline-none focus-visible:ring-2 focus-visible:ring-ring",
                           isSelected
                             ? "border-primary ring-1 ring-primary"
                             : "border-primary/40",
                           isDragging &&
-                            "z-30 cursor-grabbing border-primary opacity-90 shadow-lg shadow-black/40",
+                            "z-30 cursor-normal border-primary opacity-90 shadow-lg shadow-black/40",
                           drag && !isDragging && "transition-[left] duration-100",
                         )}
                         style={{
@@ -936,6 +965,17 @@ export function EditorTimeline({
                         }}
                       >
                         <div className="absolute inset-0 bg-gradient-to-r from-primary/20 via-primary/10 to-primary/20" />
+                        {track.type === "video" ? (
+                          <ClipThumbnails
+                            clip={clip}
+                            pxPerSecond={pxPerSecond}
+                            clipLeftPx={left}
+                            viewportWidth={viewportWidth}
+                            storyboard={storyboard}
+                            poster={media.poster}
+                            height={CLIP_HEIGHT}
+                          />
+                        ) : null}
                         {frameGrid ? (
                           <div
                             className="absolute inset-0"
@@ -944,15 +984,17 @@ export function EditorTimeline({
                           />
                         ) : null}
 
-                        <div className="relative flex h-full items-center gap-1.5 px-2">
-                          <Film
-                            className="text-primary size-3.5 shrink-0"
-                            aria-hidden="true"
-                          />
-                          <span className="truncate text-[11px] font-medium">
-                            {clipLabel}
+                        <div className="relative flex h-full min-w-0 items-center gap-1.5 px-2">
+                          <span className="inline-flex min-w-0 items-center gap-1 rounded-sm bg-black/55 px-1 py-0.5">
+                            <Film
+                              className="text-primary size-3.5 shrink-0"
+                              aria-hidden="true"
+                            />
+                            <span className="truncate text-[11px] font-medium">
+                              {clipLabel}
+                            </span>
                           </span>
-                          <span className="text-muted-foreground ml-auto shrink-0 font-mono text-[10px]">
+                          <span className="text-muted-foreground ml-auto shrink-0 rounded-sm bg-black/55 px-1 py-0.5 font-mono text-[10px]">
                             {formatTimecode(clip.duration)}
                           </span>
                         </div>
@@ -990,6 +1032,14 @@ export function EditorTimeline({
             </div>
           ) : null}
         </div>
+
+        <TimelineScrollbar
+          scrollX={scrollX}
+          maxScroll={maxScroll}
+          viewportWidth={viewportWidth}
+          onScroll={scrollTo}
+          onManual={markManual}
+        />
       </div>
     </section>
   );

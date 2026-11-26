@@ -64,6 +64,10 @@ export interface TimelineController {
   zoomToFrame: () => void;
   resetZoom: () => void;
   panBy: (deltaX: number) => void;
+  /** Moves the viewport to an absolute horizontal scroll offset, clamped. */
+  scrollTo: (scrollX: number) => void;
+  /** Furthest the lane can scroll at the current zoom and width. */
+  maxScroll: number;
   /** Call when the user starts panning or scrubbing, so playback stops chasing. */
   markManual: () => void;
 }
@@ -360,9 +364,9 @@ export function useTimeline(
     zoomTo(maxLevelFor(base));
   }, [zoomTo]);
 
-  const panBy = useCallback(
-    (deltaX: number) => {
-      if (!Number.isFinite(deltaX) || deltaX === 0) return;
+  const scrollTo = useCallback(
+    (nextScrollX: number) => {
+      if (!Number.isFinite(nextScrollX)) return;
 
       const base = baseRef.current;
       const width = laneRef.current?.clientWidth ?? 0;
@@ -375,12 +379,20 @@ export function useTimeline(
         base,
         width,
       );
-      const next = clampScroll(current.scrollX + deltaX, maxScroll);
+      const next = clampScroll(nextScrollX, maxScroll);
       if (next === current.scrollX) return;
 
       setViewport({ level: current.level, scrollX: next });
     },
     [setViewport],
+  );
+
+  const panBy = useCallback(
+    (deltaX: number) => {
+      if (!Number.isFinite(deltaX) || deltaX === 0) return;
+      scrollTo(viewportRef.current.scrollX + deltaX);
+    },
+    [scrollTo],
   );
 
   const resetZoom = useCallback(() => {
@@ -586,6 +598,8 @@ export function useTimeline(
     zoomToFrame,
     resetZoom,
     panBy,
+    scrollTo,
+    maxScroll,
     markManual,
   };
 }
