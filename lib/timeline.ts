@@ -28,8 +28,8 @@ export type TimelineViewport = {
 /** HLS does not expose the frame rate, so one constant stands in for it. */
 export const FPS = 30;
 
-/** Empty space before time 0, in pixels. */
-export const PAD = 48;
+/** Empty space before time 0, in pixels. Zero: clips start flush with the lane edge. */
+export const PAD = 0;
 
 /** Fraction of the viewport left empty after the content's end. */
 export const END_MARGIN = 0.26;
