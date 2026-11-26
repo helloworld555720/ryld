@@ -693,11 +693,6 @@ export function EditorTimeline({
           Timeline
         </h2>
 
-        <p className="text-muted-foreground font-mono text-[11px] tabular-nums">
-          {formatTimecode(time)}{" "}
-          <span className="opacity-60">/ {formatTimecode(duration)}</span>
-        </p>
-
         <div className="flex items-center gap-0.5">
           <Button
             type="button"
