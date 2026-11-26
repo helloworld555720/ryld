@@ -574,11 +574,19 @@ describe("remapPlayhead", () => {
     expect(remapPlayhead(clips, [], 4)).toEqual({ time: 0, seek: null });
   });
 
-  it("keeps the frame when clips are reordered", () => {
+  it("keeps the timeline position when clips are reordered", () => {
     const original = [clip("a", 0, 4, 0), clip("b", 4, 4, 10)];
     const reordered = moveClip(original, "b", 0);
 
-    expect(remapPlayhead(original, reordered, 5)).toEqual({ time: 1, seek: null });
+    expect(remapPlayhead(original, reordered, 5)).toEqual({ time: 5, seek: null });
+  });
+
+  it("keeps the timeline position when reordering already-trimmed clips", () => {
+    const original = [clip("a", 0, 4, 0), clip("b", 4, 4, 10)];
+    const trimmed = deleteLeftAt(original, 6);
+    const reordered = moveClip(trimmed, "b", 0);
+
+    expect(remapPlayhead(trimmed, reordered, 4)).toEqual({ time: 4, seek: null });
   });
 
   it("lands at the end, not the start, when nothing followed the deleted clip", () => {

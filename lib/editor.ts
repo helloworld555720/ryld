@@ -602,11 +602,44 @@ export interface PlayheadRemap {
 }
 
 /**
+ * True when `next` holds exactly the same clips as `previous`, untrimmed and
+ * unsplit, in a different order. That is what a drag-reorder produces.
+ */
+function isPureReorder(
+  previous: readonly EditorClip[],
+  next: readonly EditorClip[],
+): boolean {
+  if (previous.length !== next.length) return false;
+
+  const before = new Map(previous.map((clip) => [clip.id, clip]));
+  let moved = false;
+
+  for (let index = 0; index < next.length; index += 1) {
+    const clip = next[index];
+    const old = before.get(clip.id);
+    if (
+      !old ||
+      Math.abs(old.duration - clip.duration) > CLIP_EPSILON ||
+      Math.abs(old.sourceOffset - clip.sourceOffset) > CLIP_EPSILON
+    ) {
+      return false;
+    }
+    if (previous[index].id !== clip.id) moved = true;
+  }
+
+  return moved;
+}
+
+/**
  * Maps a playhead from one clip list to the next, keeping the **frame**, not the
  * old timeline coordinate. A frame that survives only moves with its clip
- * (a head trim, an earlier delete, a reorder). A frame that was removed lands
+ * (a head trim, an earlier delete). A frame that was removed lands
  * on the first surviving clip that **followed it in the previous order**, or at
  * the end when nothing followed. Returns `seek` only when the old frame is gone.
+ *
+ * A pure reorder is the exception: the playhead keeps its timeline position, so
+ * it stays put while the clips move under it, and the preview shows whichever
+ * clip now sits there.
  */
 export function remapPlayhead(
   previous: readonly EditorClip[],
@@ -614,6 +647,11 @@ export function remapPlayhead(
   time: number,
 ): PlayheadRemap {
   const end = sequenceDuration(next);
+
+  if (isPureReorder(previous, next)) {
+    return { time: Math.min(Math.max(time, 0), end), seek: null };
+  }
+
   const oldSource = timelineToSource(previous, time);
 
   if (oldSource === null) {
