@@ -76,7 +76,8 @@ const CLIP_HEIGHT = TRACK_HEIGHT - 16;
 /** The waveform strip along the bottom of a video clip. */
 const WAVEFORM_HEIGHT = 32;
 
-/** Uncolored breathing room between the frames and the waveform strip, in pixels. */
+/** Breathing room between the frames and the waveform strip, in pixels. It
+ * wears the strip's own background so the two read as one grey band. */
 const WAVEFORM_GAP = 4;
 
 /** What is left of the clip's inner box (inside its 1px border) for frames. */
@@ -947,8 +948,7 @@ export function EditorTimeline({
                           handleClipKeyDown(event, clip.id, track.id)
                         }
                         className={cn(
-                          "pointer-events-auto absolute top-2 bottom-2 touch-none cursor-normal overflow-hidden rounded-md border outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          track.type !== "video" && "bg-primary/10",
+                          "pointer-events-auto absolute top-2 bottom-2 touch-none cursor-normal overflow-hidden rounded-md border bg-primary/10 outline-none focus-visible:ring-2 focus-visible:ring-ring",
                           isSelected
                             ? "border-primary ring-1 ring-primary"
                             : "border-primary/40",
@@ -961,14 +961,7 @@ export function EditorTimeline({
                           width: Math.max(clip.duration * pxPerSecond, 2),
                         }}
                       >
-                        <div
-                          className="absolute inset-x-0 top-0 bg-gradient-to-r from-primary/20 via-primary/10 to-primary/20"
-                          style={
-                            track.type === "video"
-                              ? { height: THUMBNAIL_HEIGHT }
-                              : { bottom: 0 }
-                          }
-                        />
+                        <div className="absolute inset-0 bg-gradient-to-r from-primary/20 via-primary/10 to-primary/20" />
 
                         {/* Frames on top, the clip's own audio underneath. The
                          * strip is only for video tracks: it is that clip's
@@ -1017,6 +1010,17 @@ export function EditorTimeline({
                             </span>
                           </div>
                         </div>
+
+                        {track.type === "video" ? (
+                          <div
+                            className="absolute inset-x-0 bg-black/35"
+                            style={{
+                              bottom: WAVEFORM_HEIGHT,
+                              height: WAVEFORM_GAP,
+                            }}
+                            aria-hidden="true"
+                          />
+                        ) : null}
 
                         {track.type === "video" ? (
                           <div
