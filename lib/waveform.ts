@@ -191,10 +191,11 @@ export function waveformBars(input: WaveformBarsInput): WaveformBar[] {
 }
 
 /**
- * One SVG path for a list of bars, mirrored around the vertical centre.
+ * One SVG path for a list of bars, growing upward from the bottom edge.
  *
  * A single `<path>` keeps the DOM flat however many bars are visible. Heights
- * are rounded to half pixels so the bars stay crisp without a per-bar node.
+ * are rounded to half pixels so the bars stay crisp without a per-bar node, and
+ * never fall below one pixel so silence still reads as a line.
  */
 export function waveformPath(
   bars: readonly WaveformBar[],
@@ -203,13 +204,17 @@ export function waveformPath(
 ): string {
   if (!isPositive(height) || !isPositive(barWidth)) return "";
 
-  const centre = height / 2;
   const segments: string[] = [];
 
   for (const bar of bars) {
-    const half = Math.max(0.5, Math.round(bar.level * centre * 2) / 2);
+    const barHeight = Math.min(
+      height,
+      Math.max(1, Math.round(bar.level * height * 2) / 2),
+    );
     const x = Math.round(bar.left * 100) / 100;
-    segments.push(`M${x} ${centre - half}h${barWidth}v${half * 2}h-${barWidth}z`);
+    segments.push(
+      `M${x} ${height - barHeight}h${barWidth}v${barHeight}h-${barWidth}z`,
+    );
   }
 
   return segments.join("");

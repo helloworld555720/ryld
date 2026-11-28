@@ -779,10 +779,10 @@ those files; re-run the CLI instead.
   time** (a 2px bar + 1px gap, `max` of the peaks each bar covers), so a split leaves both
   halves drawing identical bars and reordering moves the audio with its clip; each bar is
   clamped to the clip's own range, so trimmed-away footage never leaks its peak in. Only
-  visible bars are computed and they are drawn as one SVG `<path>`, mirrored on the centre
-  line, in `text-primary` (no new colour). `useAudioLevels` (`clip-waveform.tsx`) fetches
-  best-effort with `credentials: "omit"`: a missing, blocked or malformed file leaves a flat
-  centre line and nothing else changes. A muted video track dims its waveform. Not done yet:
+  visible bars are computed and they are drawn as one SVG `<path>`, growing upward from a
+  baseline along the bottom of the strip (not mirrored), in `text-primary` (no new colour). `useAudioLevels` (`clip-waveform.tsx`) fetches
+  best-effort with `credentials: "omit"`: a missing, blocked or malformed file leaves just the
+  baseline and nothing else changes. A muted video track dims its waveform. Not done yet:
   extracting a clip's audio onto its own track — the waveform is the clip's own soundtrack.
   Tests: `tests/waveform.test.ts`, plus `levelsUrl` and the new `levels` field in
   `tests/media.test.ts`. `bun run check` was not run in the agent environment (no installs

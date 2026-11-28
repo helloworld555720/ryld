@@ -163,7 +163,7 @@ describe("waveformBars", () => {
 });
 
 describe("waveformPath", () => {
-  it("draws one mirrored rectangle per bar in a single path", () => {
+  it("draws one rectangle per bar, rising from the bottom edge, in a single path", () => {
     const path = waveformPath(
       [
         { key: 0, left: 0, level: 1 },
@@ -172,7 +172,17 @@ describe("waveformPath", () => {
       20,
     );
 
-    expect(path).toBe("M0 0h2v20h-2zM3 5h2v10h-2z");
+    /* Every rectangle ends on y = 20, the bottom; only its top moves. */
+    expect(path).toBe("M0 0h2v20h-2zM3 10h2v10h-2z");
+  });
+
+  it("keeps the quietest bar at least one pixel tall and never past the strip", () => {
+    expect(waveformPath([{ key: 0, left: 0, level: 0 }], 20)).toBe(
+      "M0 19h2v1h-2z",
+    );
+    expect(waveformPath([{ key: 0, left: 0, level: 5 }], 20)).toBe(
+      "M0 0h2v20h-2z",
+    );
   });
 
   it("is empty without bars or without a height", () => {

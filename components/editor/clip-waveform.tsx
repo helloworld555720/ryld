@@ -82,8 +82,9 @@ export interface ClipWaveformProps {
  *
  * Only bars that intersect the viewport are computed, and they are drawn as one
  * SVG path, so a four-minute clip at frame zoom does not create thousands of
- * nodes. Without levels it draws a single centre line, which also keeps the
- * strip from collapsing while the file loads.
+ * nodes. Bars grow upward from a baseline along the bottom edge. Without levels
+ * it draws just the baseline, which also keeps the strip from collapsing while
+ * the file loads.
  */
 export function ClipWaveform({
   clip,
@@ -120,8 +121,8 @@ export function ClipWaveform({
       <line
         x1="0"
         x2="100%"
-        y1={height / 2}
-        y2={height / 2}
+        y1={height - 0.5}
+        y2={height - 0.5}
         stroke="currentColor"
         strokeOpacity={0.35}
       />
