@@ -131,7 +131,25 @@ function ClipWaveformView({
     [levels, bars, height],
   );
 
+  /* The same strips again at full height, for the part under the line. Drawn
+   * as bars rather than a solid fill so it matches the peaks above it. */
+  const bandPath = useMemo(
+    () =>
+      levels
+        ? waveformPath(
+            bars.map((bar) => ({ ...bar, level: 1 })),
+            height,
+            WAVEFORM_BAR_WIDTH,
+          )
+        : "",
+    [levels, bars, height],
+  );
+
   const { band, peakScale } = waveformShape(gainDb, height);
+
+  /* The peaks start half a pixel inside the band, so the two never leave a
+   * hairline seam between them; both are one colour under one opacity. */
+  const SEAM = 0.5;
 
   return (
     <svg
@@ -150,21 +168,21 @@ function ClipWaveformView({
       />
       {levels ? (
         <>
-          {/* The band under the loudness line: nothing is ever drawn below it. */}
-          <rect
-            x="0"
-            width="100%"
-            y={height - band}
-            height={band}
-            fill="currentColor"
-          />
-          {/* The peaks stand on the band. Scaling the finished path, rather
-           * than rebuilding it, keeps every step of a drag sub-pixel smooth. */}
+          {/* The strips under the loudness line: nothing is drawn below it. */}
+          {bandPath ? (
+            <path
+              d={bandPath}
+              fill="currentColor"
+              transform={`translate(0 ${height - band}) scale(1 ${band / height})`}
+            />
+          ) : null}
+          {/* The peaks stand on the band. Scaling the finished paths, rather
+           * than rebuilding them, keeps every step of a drag sub-pixel smooth. */}
           {path && peakScale > 0.001 ? (
             <path
               d={path}
               fill="currentColor"
-              transform={`translate(0 ${height - band - peakScale * height}) scale(1 ${peakScale})`}
+              transform={`translate(0 ${height - band - peakScale * height + SEAM}) scale(1 ${peakScale})`}
             />
           ) : null}
         </>
