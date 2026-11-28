@@ -55,7 +55,6 @@ import {
   type ClipEditAction,
   type EditorTrack,
 } from "@/lib/editor";
-import { dbToLinear } from "@/lib/audio";
 import type { ProjectMedia } from "@/lib/media";
 import {
   FRAME_BAND_MIN_PX,
@@ -1047,9 +1046,7 @@ export function EditorTimeline({
                               viewportWidth={viewportWidth}
                               height={WAVEFORM_HEIGHT}
                               muted={track.muted}
-                              gain={dbToLinear(
-                                clipGainDb(clip) + trackGainDb(track),
-                              )}
+                              gainDb={clipGainDb(clip)}
                             />
                             <GainLine
                               gainDb={clipGainDb(clip)}

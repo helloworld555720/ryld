@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 
+import { dbToLinear, gainLineOffset } from "@/lib/audio";
 import type { EditorClip } from "@/lib/editor";
 import {
   WAVEFORM_BAR_WIDTH,
@@ -75,8 +76,11 @@ export interface ClipWaveformProps {
   height: number;
   /** A muted track keeps its waveform but reads as inactive. */
   muted?: boolean;
-  /** Linear loudness multiplier: the bars grow and shrink with the clip's level. */
-  gain?: number;
+  /**
+   * The clip's loudness in dB. The bars grow and shrink with it, and none is
+   * ever shorter than the loudness line, which sits at this level.
+   */
+  gainDb?: number;
 }
 
 /**
@@ -88,7 +92,7 @@ export interface ClipWaveformProps {
  * it draws just the baseline, which also keeps the strip from collapsing while
  * the file loads.
  */
-export function ClipWaveform({
+function ClipWaveformView({
   clip,
   levels,
   pxPerSecond,
@@ -96,24 +100,43 @@ export function ClipWaveform({
   viewportWidth,
   height,
   muted = false,
-  gain = 1,
+  gainDb = 0,
 }: ClipWaveformProps) {
-  const path = useMemo(() => {
-    if (!levels) return "";
+  const { duration, sourceOffset } = clip;
 
-    return waveformPath(
-      waveformBars({
-        levels,
-        clip,
-        pxPerSecond,
-        clipLeftPx,
-        viewportWidth,
-      }),
-      height,
-      WAVEFORM_BAR_WIDTH,
-      gain,
-    );
-  }, [levels, clip, pxPerSecond, clipLeftPx, viewportWidth, height, gain]);
+  /*
+   * Which bars exist depends on the source and the zoom, never on loudness, and
+   * finding each bar's peak is the expensive part. It is kept apart from the
+   * path so dragging the loudness line only redraws heights, and keyed on the
+   * clip's range rather than the clip object, which is replaced on every edit.
+   */
+  const bars = useMemo(
+    () =>
+      levels
+        ? waveformBars({
+            levels,
+            clip: { duration, sourceOffset },
+            pxPerSecond,
+            clipLeftPx,
+            viewportWidth,
+          })
+        : [],
+    [levels, duration, sourceOffset, pxPerSecond, clipLeftPx, viewportWidth],
+  );
+
+  const path = useMemo(
+    () =>
+      levels
+        ? waveformPath(
+            bars,
+            height,
+            WAVEFORM_BAR_WIDTH,
+            dbToLinear(gainDb),
+            gainLineOffset(gainDb, height),
+          )
+        : "",
+    [levels, bars, height, gainDb],
+  );
 
   return (
     <svg
@@ -134,3 +157,5 @@ export function ClipWaveform({
     </svg>
   );
 }
+
+export const ClipWaveform = memo(ClipWaveformView);

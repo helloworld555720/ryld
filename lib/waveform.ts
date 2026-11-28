@@ -199,23 +199,26 @@ export function waveformBars(input: WaveformBarsInput): WaveformBar[] {
  *
  * `gain` is a linear multiplier on every bar, so the waveform grows and shrinks
  * with the clip's loudness. Loud bars stop at the top of the strip, the way a
- * boosted signal clips.
+ * boosted signal clips. `floor` is the shortest a bar may be, in pixels: it is
+ * where the loudness line sits, so nothing is ever drawn below the line.
  */
 export function waveformPath(
   bars: readonly WaveformBar[],
   height: number,
   barWidth: number = WAVEFORM_BAR_WIDTH,
   gain: number = 1,
+  floor: number = 0,
 ): string {
   if (!isPositive(height) || !isPositive(barWidth)) return "";
 
   const segments: string[] = [];
   const scale = Number.isFinite(gain) && gain > 0 ? gain : 0;
+  const lowest = Number.isFinite(floor) && floor > 0 ? floor : 0;
 
   for (const bar of bars) {
     const barHeight = Math.min(
       height,
-      Math.max(1, Math.round(bar.level * scale * height * 2) / 2),
+      Math.max(1, lowest, Math.round(bar.level * scale * height * 2) / 2),
     );
     const x = Math.round(bar.left * 100) / 100;
     segments.push(

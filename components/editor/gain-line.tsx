@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -8,6 +9,7 @@ import {
 } from "react";
 
 import {
+  GAIN_LINE_PADDING,
   GAIN_MAX_DB,
   GAIN_MIN_DB,
   clampGainDb,
@@ -17,8 +19,7 @@ import {
 } from "@/lib/audio";
 import { cn } from "@/lib/utils";
 
-/** Keeps the line fully inside its area at both ends of the range. */
-const EDGE_PADDING = 3;
+const EDGE_PADDING = GAIN_LINE_PADDING;
 
 const STEP_DB = 1;
 const COARSE_STEP_DB = 6;
@@ -44,6 +45,11 @@ export interface GainLineProps {
  * remembered so it does not jump to the cursor. Everything it handles stops at
  * the line, because it lives inside a clip that otherwise starts a reorder on
  * any press.
+ *
+ * While dragging, the line is drawn from its own state, so it keeps up with the
+ * pointer however fast the pointer reports. The edit itself is passed on at most
+ * once per animation frame: each one re-renders the timeline and redraws the
+ * waveform, and doing that at a pointer's polling rate only makes it stutter.
  */
 export function GainLine({
   gainDb,
@@ -55,8 +61,48 @@ export function GainLine({
   const areaRef = useRef<HTMLDivElement | null>(null);
   const grabRef = useRef<{ pointerId: number; offsetY: number } | null>(null);
   const [dragging, setDragging] = useState(false);
+  /** The level under the pointer mid-drag; `null` means use the prop. */
+  const [live, setLive] = useState<number | null>(null);
 
-  const level = clampGainDb(gainDb);
+  const onChangeRef = useRef(onChange);
+  const pendingRef = useRef<number | null>(null);
+  const frameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  });
+
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    },
+    [],
+  );
+
+  /** Hands the newest pending level to the editor, now. */
+  const flush = () => {
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    if (pending !== null) onChangeRef.current(pending);
+  };
+
+  /** Queues a level; only the latest one in a frame is applied. */
+  const schedule = (value: number) => {
+    pendingRef.current = value;
+    if (frameRef.current !== null) return;
+
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      flush();
+    });
+  };
+
+  const level = live ?? clampGainDb(gainDb);
   const fraction = fractionFromGain(level);
 
   /* Pixel position of the line inside the area, measured from the top. */
@@ -93,7 +139,19 @@ export function GainLine({
 
     const top = event.clientY - area.top - grab.offsetY - EDGE_PADDING;
     const next = gainFromFraction(1 - top / travel);
-    if (next !== level) onChange(next);
+
+    setLive(next);
+    schedule(next);
+  };
+
+  /** Ends a drag from any route (release, cancel, lost capture). Idempotent. */
+  const endDrag = () => {
+    if (!grabRef.current) return;
+
+    grabRef.current = null;
+    flush();
+    setDragging(false);
+    setLive(null);
   };
 
   const finishDrag = (event: PointerEvent<HTMLDivElement>) => {
@@ -102,8 +160,7 @@ export function GainLine({
     const grab = grabRef.current;
     if (!grab || grab.pointerId !== event.pointerId) return;
 
-    grabRef.current = null;
-    setDragging(false);
+    endDrag();
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -174,10 +231,7 @@ export function GainLine({
         onPointerMove={handlePointerMove}
         onPointerUp={finishDrag}
         onPointerCancel={finishDrag}
-        onLostPointerCapture={() => {
-          grabRef.current = null;
-          setDragging(false);
-        }}
+        onLostPointerCapture={endDrag}
         onDoubleClick={(event) => {
           event.stopPropagation();
           onChange(0);

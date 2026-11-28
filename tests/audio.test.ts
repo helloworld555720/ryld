@@ -6,8 +6,10 @@ import {
   clampGainDb,
   dbToLinear,
   formatGainDb,
+  GAIN_LINE_PADDING,
   fractionFromGain,
   gainFromFraction,
+  gainLineOffset,
 } from "@/lib/audio";
 
 describe("clampGainDb", () => {
@@ -41,23 +43,50 @@ describe("dbToLinear", () => {
 });
 
 describe("fractionFromGain / gainFromFraction", () => {
-  it("maps the range onto 0..1, with 0 dB three quarters up", () => {
+  it("maps the range onto 0..1, with 0 dB a quarter of the way up", () => {
     expect(fractionFromGain(GAIN_MIN_DB)).toBe(0);
     expect(fractionFromGain(GAIN_MAX_DB)).toBe(1);
-    expect(fractionFromGain(0)).toBeCloseTo(0.75, 9);
+    expect(fractionFromGain(0)).toBeCloseTo(0.25, 9);
+  });
+
+  it("rises strictly with loudness, so a drag never jumps or doubles back", () => {
+    let previous = -1;
+    for (let db = GAIN_MIN_DB; db <= GAIN_MAX_DB; db += 0.5) {
+      const fraction = fractionFromGain(db);
+      expect(fraction).toBeGreaterThan(previous);
+      previous = fraction;
+    }
+  });
+
+  it("gives the first dB of a cut more room than the deep end", () => {
+    const shallow = fractionFromGain(0) - fractionFromGain(-6);
+    const deep = fractionFromGain(-48) - fractionFromGain(-54);
+
+    expect(shallow).toBeGreaterThan(deep * 3);
   });
 
   it("round-trips away from the 0 dB snap", () => {
-    for (const db of [-60, -40, -12, 6, 20]) {
-      expect(gainFromFraction(fractionFromGain(db))).toBeCloseTo(db, 9);
+    for (const db of [-60, -40, -12, -3, 3, 6, 20]) {
+      expect(gainFromFraction(fractionFromGain(db))).toBeCloseTo(db, 6);
     }
   });
 
   it("snaps to exactly 0 dB when close, and clamps out-of-range input", () => {
-    expect(gainFromFraction(0.75)).toBe(0);
-    expect(gainFromFraction(0.75 + 0.5 / 80)).toBe(0);
+    expect(gainFromFraction(0.25)).toBe(0);
+    expect(gainFromFraction(0.25 + 0.01)).toBe(0);
     expect(gainFromFraction(-1)).toBe(GAIN_MIN_DB);
     expect(gainFromFraction(2)).toBe(GAIN_MAX_DB);
+  });
+});
+
+describe("gainLineOffset", () => {
+  it("keeps the line inside the strip at both ends", () => {
+    expect(gainLineOffset(GAIN_MIN_DB, 32)).toBe(GAIN_LINE_PADDING);
+    expect(gainLineOffset(GAIN_MAX_DB, 32)).toBe(32 - GAIN_LINE_PADDING);
+  });
+
+  it("puts 0 dB low in the strip", () => {
+    expect(gainLineOffset(0, 32)).toBeCloseTo(3 + 0.25 * 26, 9);
   });
 });
 

@@ -196,6 +196,18 @@ describe("waveformPath", () => {
     expect(waveformPath(bars, 20, 2, 0.5)).toBe("M0 17.5h2v2.5h-2zM3 12.5h2v7.5h-2z");
   });
 
+  it("never draws a bar shorter than the floor", () => {
+    const bars = [
+      { key: 0, left: 0, level: 0.1 },
+      { key: 1, left: 3, level: 0.9 },
+    ];
+
+    /* 0.1 of 20px is 2px, lifted to the 8px floor; the tall bar is untouched. */
+    expect(waveformPath(bars, 20, 2, 1, 8)).toBe("M0 12h2v8h-2zM3 2h2v18h-2z");
+    /* Turned all the way down, the floor is all that is left. */
+    expect(waveformPath(bars, 20, 2, 0, 3)).toBe("M0 17h2v3h-2zM3 17h2v3h-2z");
+  });
+
   it("collapses to the baseline at zero gain", () => {
     expect(waveformPath([{ key: 0, left: 0, level: 1 }], 20, 2, 0)).toBe(
       "M0 19h2v1h-2z",
