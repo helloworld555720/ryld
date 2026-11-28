@@ -22,6 +22,21 @@ export interface ProjectMedia {
   thumbnails?: string;
   captions?: string;
   chapters?: string;
+  /** Audio peak levels for the timeline waveform, next to the manifest. */
+  levels: string;
+}
+
+/**
+ * The audio levels file that sits beside a playlist: `<folder>/master.m3u8`
+ * becomes `<folder>/levels.json`.
+ *
+ * Only the final path segment is replaced, so a query string survives and a
+ * folder that happens to contain `master.m3u8` is left alone. A playlist with a
+ * different name is replaced the same way, because the file's location is the
+ * folder, not the manifest's name.
+ */
+export function levelsUrl(playlist: string): string {
+  return playlist.replace(/[^/?#]*(?=[?#]|$)/, "levels.json");
 }
 
 /**
@@ -85,6 +100,7 @@ export function projectMedia(
     thumbnails: optionalField(base, source, "thumbnails"),
     captions: optionalField(base, source, "captions"),
     chapters: optionalField(base, source, "chapters"),
+    levels: levelsUrl(playlist),
   };
 }
 

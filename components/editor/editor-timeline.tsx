@@ -35,6 +35,10 @@ import {
   ClipThumbnails,
   useStoryboard,
 } from "@/components/editor/clip-thumbnails";
+import {
+  ClipWaveform,
+  useAudioLevels,
+} from "@/components/editor/clip-waveform";
 import { TimelineScrollbar } from "@/components/editor/timeline-scrollbar";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -64,10 +68,16 @@ import { cn } from "@/lib/utils";
 const RULER_HEIGHT = 32;
 
 /** One track row, and the matching track header height. */
-const TRACK_HEIGHT = 64;
+const TRACK_HEIGHT = 96;
 
 /** The clip inset: `top-2 bottom-2` inside its track row. */
 const CLIP_HEIGHT = TRACK_HEIGHT - 16;
+
+/** The waveform strip along the bottom of a video clip. */
+const WAVEFORM_HEIGHT = 32;
+
+/** What is left of the clip's inner box (inside its 1px border) for frames. */
+const THUMBNAIL_HEIGHT = CLIP_HEIGHT - 2 - WAVEFORM_HEIGHT;
 
 /** Lane-edge distance and step for auto-panning while a clip is dragged. */
 const DRAG_SCROLL_EDGE = 40;
@@ -110,8 +120,9 @@ function TrackHeader({
 
   return (
     <div
+      style={{ height: TRACK_HEIGHT }}
       className={cn(
-        "flex h-16 shrink-0 items-center gap-1.5 border-b px-2",
+        "flex shrink-0 items-center gap-1.5 border-b px-2",
         selected && "bg-accent/40",
       )}
     >
@@ -200,6 +211,7 @@ export function EditorTimeline({
   const clips = useMemo(() => videoClips(tracks), [tracks]);
   const timeline = useTimeline(videoRef, clips);
   const storyboard = useStoryboard(media.thumbnails);
+  const audioLevels = useAudioLevels(media.levels);
   const {
     laneRef,
     time,
@@ -946,39 +958,71 @@ export function EditorTimeline({
                         }}
                       >
                         <div className="absolute inset-0 bg-gradient-to-r from-primary/20 via-primary/10 to-primary/20" />
-                        {track.type === "video" ? (
-                          <ClipThumbnails
-                            clip={clip}
-                            pxPerSecond={pxPerSecond}
-                            clipLeftPx={left}
-                            viewportWidth={viewportWidth}
-                            storyboard={storyboard}
-                            poster={media.poster}
-                            height={CLIP_HEIGHT}
-                          />
-                        ) : null}
-                        {frameGrid ? (
-                          <div
-                            className="absolute inset-0"
-                            style={{ backgroundImage: frameGrid }}
-                            aria-hidden="true"
-                          />
-                        ) : null}
 
-                        <div className="relative flex h-full min-w-0 items-center gap-1.5 px-2">
-                          <span className="inline-flex min-w-0 items-center gap-1 rounded-sm bg-black/55 px-1 py-0.5">
-                            <Film
-                              className="text-primary size-3.5 shrink-0"
+                        {/* Frames on top, the clip's own audio underneath. The
+                         * strip is only for video tracks: it is that clip's
+                         * soundtrack, not a separate audio clip. */}
+                        <div
+                          className="absolute inset-x-0 top-0 overflow-hidden"
+                          style={{
+                            height:
+                              track.type === "video"
+                                ? THUMBNAIL_HEIGHT
+                                : undefined,
+                            bottom: track.type === "video" ? undefined : 0,
+                          }}
+                        >
+                          {track.type === "video" ? (
+                            <ClipThumbnails
+                              clip={clip}
+                              pxPerSecond={pxPerSecond}
+                              clipLeftPx={left}
+                              viewportWidth={viewportWidth}
+                              storyboard={storyboard}
+                              poster={media.poster}
+                              height={THUMBNAIL_HEIGHT}
+                            />
+                          ) : null}
+                          {frameGrid ? (
+                            <div
+                              className="absolute inset-0"
+                              style={{ backgroundImage: frameGrid }}
                               aria-hidden="true"
                             />
-                            <span className="truncate text-[11px] font-medium">
-                              {clipLabel}
+                          ) : null}
+
+                          <div className="relative flex h-full min-w-0 items-start gap-1.5 px-2 pt-1.5">
+                            <span className="inline-flex min-w-0 items-center gap-1 rounded-sm bg-black/55 px-1 py-0.5">
+                              <Film
+                                className="text-primary size-3.5 shrink-0"
+                                aria-hidden="true"
+                              />
+                              <span className="truncate text-[11px] font-medium">
+                                {clipLabel}
+                              </span>
                             </span>
-                          </span>
-                          <span className="text-muted-foreground ml-auto shrink-0 rounded-sm bg-black/55 px-1 py-0.5 font-mono text-[10px]">
-                            {formatTimecode(clip.duration)}
-                          </span>
+                            <span className="text-muted-foreground ml-auto shrink-0 rounded-sm bg-black/55 px-1 py-0.5 font-mono text-[10px]">
+                              {formatTimecode(clip.duration)}
+                            </span>
+                          </div>
                         </div>
+
+                        {track.type === "video" ? (
+                          <div
+                            className="absolute inset-x-0 bottom-0 border-t border-primary/20 bg-black/35"
+                            style={{ height: WAVEFORM_HEIGHT }}
+                          >
+                            <ClipWaveform
+                              clip={clip}
+                              levels={audioLevels}
+                              pxPerSecond={pxPerSecond}
+                              clipLeftPx={left}
+                              viewportWidth={viewportWidth}
+                              height={WAVEFORM_HEIGHT}
+                              muted={track.muted}
+                            />
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })

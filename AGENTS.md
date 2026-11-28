@@ -208,7 +208,8 @@ components/
                            project-video-player, google-drive-file-picker
   editor/                  video-editor (layout), editor-preview,
                            editor-timeline (canvas ruler, playhead, tracks),
-                           use-timeline (viewport + playback clock)
+                           use-timeline (viewport + playback clock),
+                           clip-thumbnails (filmstrip), clip-waveform (audio strip)
   auth/                    better-auth-ui components (generated)
   providers.tsx            QueryClient + AuthProvider (client boundary)
 lib/
@@ -226,8 +227,10 @@ lib/
   editor.ts                timeline model: tracks/clips in seconds (client-safe)
   timeline.ts              viewport math, zoom anchoring, scroll clamp, ruler ticks,
                            frame snapping and timecode (pure, client-safe, tested)
-  media.ts                 storage key → absolute media URL, playable result shape
-                           (client-safe)
+  waveform.ts              levels.json schema (zod), source-time bar grid, SVG path
+                           (pure, client-safe, tested)
+  media.ts                 storage key → absolute media URL, playable result shape,
+                           levels.json URL beside the playlist (client-safe)
   connections.ts           provider + category registry, grouping helpers
   env.ts                   zod-validated env, server/public split
   errors.ts                ApiError, error mapping, safe messages
@@ -764,6 +767,27 @@ those files; re-run the CLI instead.
   dragged clip's centre, and the lane auto-pans near either edge because `scrollX` is its only
   scroll. Alt + arrow moves the selection one slot. `bun run check` green with 263 tests;
   browser verification was waived for this task.
+
+- **2026-11-28** — Added the **clip waveform** to the editor timeline. A video clip is now a
+  frame strip on top and a 32px audio strip underneath (track height 64 → 96). The audio comes
+  from `levels.json` next to the playlist: `levelsUrl()` in `lib/media.ts` replaces the last
+  path segment of `source.playlist`, so `<folder>/master.m3u8` → `<folder>/levels.json`, and
+  `ProjectMedia.levels` carries it. The file is `{ interval, peak[], duration?, floor? }` with
+  `peak` values `0..100` (0 = `floor` dB, 100 = full scale); `lib/waveform.ts` validates it with
+  zod (`parseAudioLevels`, a bad file is `null`, never a crash) and `waveformBars()` turns the
+  visible part of a clip into bars. Like the thumbnails, the bar grid is anchored to **source
+  time** (a 2px bar + 1px gap, `max` of the peaks each bar covers), so a split leaves both
+  halves drawing identical bars and reordering moves the audio with its clip; each bar is
+  clamped to the clip's own range, so trimmed-away footage never leaks its peak in. Only
+  visible bars are computed and they are drawn as one SVG `<path>`, mirrored on the centre
+  line, in `text-primary` (no new colour). `useAudioLevels` (`clip-waveform.tsx`) fetches
+  best-effort with `credentials: "omit"`: a missing, blocked or malformed file leaves a flat
+  centre line and nothing else changes. A muted video track dims its waveform. Not done yet:
+  extracting a clip's audio onto its own track — the waveform is the clip's own soundtrack.
+  Tests: `tests/waveform.test.ts`, plus `levelsUrl` and the new `levels` field in
+  `tests/media.test.ts`. `bun run check` was not run in the agent environment (no installs
+  allowed); the pure modules were run under a shim and the strip was rendered once in Chromium
+  with the real bar output.
 
 ## 11. Deferred / follow-ups
 

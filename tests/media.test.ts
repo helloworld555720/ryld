@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { projectMedia, resolveMediaUrl, sourceTitle } from "@/lib/media";
+import {
+  levelsUrl,
+  projectMedia,
+  resolveMediaUrl,
+  sourceTitle,
+} from "@/lib/media";
 
 const BASE = "https://media.example.com";
 const PREFIX = "79b7ea43c1fd45629757a55397e83a3b";
@@ -65,7 +70,37 @@ describe("sourceTitle", () => {
   });
 });
 
-describe("projectMedia", () => {  it("resolves every artefact of an hls result", () => {
+describe("levelsUrl", () => {
+  it("swaps the manifest for levels.json in the same folder", () => {
+    expect(levelsUrl(`${BASE}/${PREFIX}/master.m3u8`)).toBe(
+      `${BASE}/${PREFIX}/levels.json`,
+    );
+  });
+
+  it("only replaces the last segment", () => {
+    expect(levelsUrl(`${BASE}/master.m3u8/${PREFIX}/master.m3u8`)).toBe(
+      `${BASE}/master.m3u8/${PREFIX}/levels.json`,
+    );
+  });
+
+  it("keeps a query string or fragment", () => {
+    expect(levelsUrl(`${BASE}/${PREFIX}/master.m3u8?sig=abc`)).toBe(
+      `${BASE}/${PREFIX}/levels.json?sig=abc`,
+    );
+    expect(levelsUrl(`${BASE}/${PREFIX}/master.m3u8#t`)).toBe(
+      `${BASE}/${PREFIX}/levels.json#t`,
+    );
+  });
+
+  it("uses the folder whatever the manifest is called", () => {
+    expect(levelsUrl(`${BASE}/${PREFIX}/index.m3u8`)).toBe(
+      `${BASE}/${PREFIX}/levels.json`,
+    );
+  });
+});
+
+describe("projectMedia", () => {
+  it("resolves every artefact of an hls result", () => {
     expect(projectMedia(hlsSource, BASE)).toEqual({
       title: hlsSource.title,
       playlist: `${BASE}/${PREFIX}/master.m3u8`,
@@ -73,6 +108,7 @@ describe("projectMedia", () => {  it("resolves every artefact of an hls result",
       thumbnails: `${BASE}/${PREFIX}/storyboard.vtt`,
       captions: `${BASE}/${PREFIX}/captions.vtt`,
       chapters: `${BASE}/${PREFIX}/chapters.vtt`,
+      levels: `${BASE}/${PREFIX}/levels.json`,
     });
   });
 
@@ -107,6 +143,7 @@ describe("projectMedia", () => {  it("resolves every artefact of an hls result",
       title: "Done",
       playlist: `${BASE}/${PREFIX}/master.m3u8`,
       captions: `${BASE}/${PREFIX}/captions.vtt`,
+      levels: `${BASE}/${PREFIX}/levels.json`,
     });
   });
 
