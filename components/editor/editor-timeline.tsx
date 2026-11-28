@@ -78,7 +78,7 @@ const WAVEFORM_HEIGHT = 32;
 
 /** Breathing room between the frames and the waveform strip, in pixels. It
  * wears the strip's own background so the two read as one grey band. */
-const WAVEFORM_GAP = 4;
+const WAVEFORM_GAP = 10;
 
 /** What is left of the clip's inner box (inside its 1px border) for frames. */
 const THUMBNAIL_HEIGHT = CLIP_HEIGHT - 2 - WAVEFORM_HEIGHT - WAVEFORM_GAP;
@@ -1024,7 +1024,7 @@ export function EditorTimeline({
 
                         {track.type === "video" ? (
                           <div
-                            className="absolute inset-x-0 bottom-0 border-t border-primary/20 bg-black/35"
+                            className="absolute inset-x-0 bottom-0 bg-black/35"
                             style={{ height: WAVEFORM_HEIGHT }}
                           >
                             <ClipWaveform
