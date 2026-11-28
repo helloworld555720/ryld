@@ -30,6 +30,8 @@ import {
   type RefObject,
 } from "react";
 
+import { GainLine } from "@/components/editor/gain-line";
+import { usePreviewGain } from "@/components/editor/use-preview-gain";
 import { useTimeline } from "@/components/editor/use-timeline";
 import {
   ClipThumbnails,
@@ -45,7 +47,10 @@ import { Slider } from "@/components/ui/slider";
 import {
   canDeleteClip as sequenceCanDeleteClip,
   clipAtTime,
+  clipGainDb,
   clipOffsetAt,
+  previewGainDb,
+  trackGainDb,
   videoClips,
   type ClipEditAction,
   type EditorTrack,
@@ -91,8 +96,10 @@ export interface EditorTimelineProps {
   tracks: EditorTrack[];
   onTrackChange: (
     trackId: string,
-    patch: Partial<Pick<EditorTrack, "muted" | "hidden">>,
+    patch: Partial<Pick<EditorTrack, "muted" | "hidden" | "gainDb">>,
   ) => void;
+  /** Sets one clip's loudness in dB. Every clip keeps its own level. */
+  onClipGainChange: (clipId: string, gainDb: number) => void;
   /** Applies a playhead-anchored clip edit at the given timeline time. */
   onClipEdit: (action: ClipEditAction, time: number) => void;
   /** Removes one clip by id, selected or under the playhead. */
@@ -205,6 +212,7 @@ function TrackHeader({
 export function EditorTimeline({
   tracks,
   onTrackChange,
+  onClipGainChange,
   onClipEdit,
   onDeleteClip,
   onMoveClip,
@@ -240,6 +248,9 @@ export function EditorTimeline({
     maxScroll,
     markManual,
   } = timeline;
+
+  /* The preview's loudness follows the clip under the playhead. */
+  usePreviewGain(videoRef, previewGainDb(tracks, time));
 
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
@@ -1036,12 +1047,32 @@ export function EditorTimeline({
                               height={WAVEFORM_HEIGHT}
                               muted={track.muted}
                             />
+                            <GainLine
+                              gainDb={clipGainDb(clip)}
+                              onChange={(db) => onClipGainChange(clip.id, db)}
+                              label="Clip loudness"
+                              muted={track.muted}
+                            />
                           </div>
                         ) : null}
                       </div>
                     );
                   })
                 : null}
+
+              {/* A track with no clips has no waveform to put the line on, so
+               * the line spans the row and sets the whole track's loudness. */}
+              {track.clips.length === 0 ? (
+                <div className="pointer-events-none absolute inset-x-0 top-2 bottom-2">
+                  <GainLine
+                    gainDb={trackGainDb(track)}
+                    onChange={(db) => onTrackChange(track.id, { gainDb: db })}
+                    label="Track loudness"
+                    muted={track.muted}
+                    alwaysShowReadout
+                  />
+                </div>
+              ) : null}
             </div>
           ))}
 

@@ -10,9 +10,11 @@ import {
   deleteLeftAt,
   deleteRightAt,
   moveClip,
+  previewGainDb,
   reflowClips,
   remapPlayhead,
   sequenceDuration,
+  setClipGain,
   splitClip,
   stepPlayback,
   timelineDuration,
@@ -598,5 +600,80 @@ describe("remapPlayhead", () => {
     const next = deleteClipAt(reordered, 5);
 
     expect(remapPlayhead(reordered, next, 5)).toEqual({ time: 4, seek: null });
+  });
+});
+
+describe("clip and track loudness", () => {
+  function tracksWith(clips: EditorClip[], trackGainDb?: number): EditorTrack[] {
+    return [
+      {
+        id: "track-video-1",
+        type: "video",
+        muted: false,
+        hidden: false,
+        gainDb: trackGainDb,
+        clips,
+      },
+    ];
+  }
+
+  it("changes only the named clip", () => {
+    const tracks = tracksWith(twoClips());
+    const next = setClipGain(tracks, "b", -9);
+
+    expect(next[0].clips[0].gainDb).toBeUndefined();
+    expect(next[0].clips[1].gainDb).toBe(-9);
+    expect(tracks[0].clips[1].gainDb).toBeUndefined();
+  });
+
+  it("clamps to the -60..+20 dB range", () => {
+    const tracks = tracksWith(twoClips());
+
+    expect(setClipGain(tracks, "a", 99)[0].clips[0].gainDb).toBe(20);
+    expect(setClipGain(tracks, "a", -99)[0].clips[0].gainDb).toBe(-60);
+  });
+
+  it("returns the same tracks for a no-op or an unknown clip", () => {
+    const tracks = tracksWith(twoClips());
+
+    expect(setClipGain(tracks, "a", 0)).toBe(tracks);
+    expect(setClipGain(tracks, "missing", 6)).toBe(tracks);
+  });
+
+  it("lets both halves of a split keep the clip's level", () => {
+    const loud = setClipGain(tracksWith(twoClips()), "a", 6)[0].clips;
+    const [left, right] = splitClip(loud, 4, () => "a2");
+
+    expect(left.gainDb).toBe(6);
+    expect(right.gainDb).toBe(6);
+  });
+
+  it("keeps each clip's level when clips are reordered", () => {
+    const clips = setClipGain(tracksWith(twoClips()), "b", -12)[0].clips;
+    const moved = moveClip(clips, "b", 0);
+
+    expect(moved.map((c) => [c.id, c.gainDb])).toEqual([
+      ["b", -12],
+      ["a", undefined],
+    ]);
+  });
+
+  it("previews the level of the clip under the playhead", () => {
+    const tracks = setClipGain(tracksWith(twoClips()), "b", -12);
+
+    expect(previewGainDb(tracks, 5)).toBe(0);
+    expect(previewGainDb(tracks, 11)).toBe(-12);
+  });
+
+  it("adds the track level to the clip level", () => {
+    const tracks = setClipGain(tracksWith(twoClips(), -6), "b", -12);
+
+    expect(previewGainDb(tracks, 5)).toBe(-6);
+    expect(previewGainDb(tracks, 11)).toBe(-18);
+  });
+
+  it("uses the track level alone when the track has no clips", () => {
+    expect(previewGainDb(tracksWith([], 8), 0)).toBe(8);
+    expect(previewGainDb([], 0)).toBe(0);
   });
 });

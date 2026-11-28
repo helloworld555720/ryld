@@ -15,6 +15,8 @@
  * Client-safe: no server imports and no env reads.
  */
 
+import { clampGainDb } from "@/lib/audio";
+
 export type EditorTrackType = "video" | "audio";
 
 export interface EditorClip {
@@ -26,6 +28,8 @@ export interface EditorClip {
   duration: number;
   /** Where playback starts inside the source media, in seconds. */
   sourceOffset: number;
+  /** This clip's loudness in dB. Absent means 0 dB; clips never share a level. */
+  gainDb?: number;
 }
 
 export interface EditorTrack {
@@ -33,6 +37,8 @@ export interface EditorTrack {
   type: EditorTrackType;
   muted: boolean;
   hidden: boolean;
+  /** The whole track's loudness in dB, added to each clip's own. Absent is 0 dB. */
+  gainDb?: number;
   clips: EditorClip[];
 }
 
@@ -123,6 +129,58 @@ export function videoMuted(tracks: readonly EditorTrack[]): boolean {
 export function videoHidden(tracks: readonly EditorTrack[]): boolean {
   const videoTracks = tracks.filter((track) => track.type === "video");
   return videoTracks.length > 0 && videoTracks.every((track) => track.hidden);
+}
+
+/** A clip's own loudness in dB. */
+export function clipGainDb(clip: EditorClip): number {
+  return clampGainDb(clip.gainDb ?? 0);
+}
+
+/** A track's own loudness in dB. */
+export function trackGainDb(track: EditorTrack): number {
+  return clampGainDb(track.gainDb ?? 0);
+}
+
+/**
+ * Sets one clip's loudness, wherever it lives. Other clips are untouched: every
+ * clip has its own level. Returns the original array when nothing changed.
+ */
+export function setClipGain(
+  tracks: readonly EditorTrack[],
+  clipId: string,
+  gainDb: number,
+): EditorTrack[] {
+  const next = clampGainDb(gainDb);
+  let changed = false;
+
+  const result = tracks.map((track) => {
+    const index = track.clips.findIndex((clip) => clip.id === clipId);
+    if (index < 0 || clipGainDb(track.clips[index]) === next) return track;
+
+    changed = true;
+    const clips = track.clips.map((clip, current) =>
+      current === index ? { ...clip, gainDb: next } : clip,
+    );
+    return { ...track, clips };
+  });
+
+  return changed ? result : (tracks as EditorTrack[]);
+}
+
+/**
+ * The loudness the preview should have at `time`: the first video track's own
+ * level plus the level of the clip under the playhead. With no clips, the track
+ * level is all there is.
+ */
+export function previewGainDb(
+  tracks: readonly EditorTrack[],
+  time: number,
+): number {
+  const track = videoTrack(tracks);
+  if (!track) return 0;
+
+  const clip = clipAtTime(track.clips, time);
+  return clampGainDb(trackGainDb(track) + (clip ? clipGainDb(clip) : 0));
 }
 
 /*

@@ -19,6 +19,7 @@ import {
   deleteLeftAt,
   deleteRightAt,
   moveClip,
+  setClipGain,
   splitClip,
   updateVideoClips,
   videoHidden,
@@ -140,7 +141,7 @@ function EditorBody({ projectId, title, media }: VideoEditorProps) {
 
   const changeTrack = (
     trackId: string,
-    patch: Partial<Pick<EditorTrack, "muted" | "hidden">>,
+    patch: Partial<Pick<EditorTrack, "muted" | "hidden" | "gainDb">>,
   ) => {
     setTracks((current) =>
       current.map((track) =>
@@ -182,6 +183,12 @@ function EditorBody({ projectId, title, media }: VideoEditorProps) {
         withMediaDuration(current, duration),
         (next) => deleteClipById(next, clipId),
       ),
+    );
+  };
+
+  const changeClipGain = (clipId: string, gainDb: number) => {
+    setTracks((current) =>
+      setClipGain(withMediaDuration(current, duration), clipId, gainDb),
     );
   };
 
@@ -244,6 +251,7 @@ function EditorBody({ projectId, title, media }: VideoEditorProps) {
         <EditorTimeline
           tracks={timelineTracks}
           onTrackChange={changeTrack}
+          onClipGainChange={changeClipGain}
           onClipEdit={editClips}
           onDeleteClip={deleteClip}
           onMoveClip={reorderClip}
