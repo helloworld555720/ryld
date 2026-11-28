@@ -15,7 +15,11 @@
 
 import { z } from "zod";
 
-import { fractionFromGain, gainLineOffset } from "@/lib/audio";
+import {
+  GAIN_LINE_PADDING,
+  fractionFromGain,
+  gainLineOffset,
+} from "@/lib/audio";
 import type { EditorClip } from "@/lib/editor";
 
 /** The shape `levels.json` is documented to have. Extra keys are ignored. */
@@ -225,7 +229,7 @@ export function waveformPath(
 const PEAKS_FULL_AT = 0.5;
 
 export interface WaveformShape {
-  /** Height of the solid band under the loudness line, in pixels. */
+  /** Height of the strips under the loudness line, in pixels. */
   band: number;
   /** Vertical scale for the peaks, which stand on top of the band. */
   peakScale: number;
@@ -236,12 +240,15 @@ export interface WaveformShape {
  * tall. It follows the line's **position**, not the audio's gain, so every
  * pixel of drag changes it by a proportional, continuous amount:
  *
- * - line at the bottom: a flat strip along the bottom edge and no peaks;
+ * - line at the bottom: nothing is drawn but the line itself;
  * - line rising: the band under it rises with it, and the peaks grow in
  *   steadily over the lower half of the travel, filling the space above it;
- * - line at the top: the whole strip is filled.
+ * - line at the top: the strips fill everything under the line, and there is
+ *   no room above it for any to show.
  *
- * Nothing is ever drawn below the line, because the line is the top of the band.
+ * Nothing is ever drawn below the line, because its lower edge is the top of the
+ * band; nothing pokes above it at the top, because the peaks only grow into
+ * the space the line leaves.
  * A peak of level `L` ends `L * (height - band) * grow` above the band, which
  * only ever grows as the line rises. The growth is a straight ramp on purpose:
  * its slope is the smallest that still reaches full size, so the waveform never
@@ -250,7 +257,7 @@ export interface WaveformShape {
 export function waveformShape(db: number, height: number): WaveformShape {
   if (!isPositive(height)) return { band: 0, peakScale: 0 };
 
-  const band = gainLineOffset(db, height);
+  const band = gainLineOffset(db, height) - GAIN_LINE_PADDING;
   const grow = Math.min(Math.max(fractionFromGain(db) / PEAKS_FULL_AT, 0), 1);
 
   return {

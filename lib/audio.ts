@@ -16,8 +16,12 @@ export const GAIN_MAX_DB = 20;
  */
 const SNAP_DB = 0.5;
 
-/** Breathing room at both ends of a loudness line's travel, in pixels. */
-export const GAIN_LINE_PADDING = 3;
+/**
+ * Half the line's thickness, in pixels. The line's centre travels from this far
+ * above the bottom of its strip to this far below the top, so at either end the
+ * 1px line sits exactly in the outermost pixel row and nothing shows past it.
+ */
+export const GAIN_LINE_PADDING = 0.5;
 
 /**
  * Where 0 dB sits on the control, as a fraction of its travel from the bottom.
@@ -74,9 +78,9 @@ export function gainFromFraction(fraction: number): number {
 }
 
 /**
- * How far above the bottom of a strip `height` pixels tall the loudness line
- * sits. The waveform uses the same number as the height it never drops below,
- * so the line and the bars cannot disagree.
+ * How far above the bottom of a strip `height` pixels tall the loudness line's
+ * centre sits. The waveform builds on the same number, so the line and the bars
+ * cannot disagree.
  */
 export function gainLineOffset(db: number, height: number): number {
   const travel = Math.max(height - GAIN_LINE_PADDING * 2, 0);

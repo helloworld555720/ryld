@@ -169,7 +169,7 @@ function ClipWaveformView({
       {levels ? (
         <>
           {/* The strips under the loudness line: nothing is drawn below it. */}
-          {bandPath ? (
+          {bandPath && band > 0.001 ? (
             <path
               d={bandPath}
               fill="currentColor"

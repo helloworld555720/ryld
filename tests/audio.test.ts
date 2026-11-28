@@ -80,13 +80,14 @@ describe("fractionFromGain / gainFromFraction", () => {
 });
 
 describe("gainLineOffset", () => {
-  it("keeps the line inside the strip at both ends", () => {
-    expect(gainLineOffset(GAIN_MIN_DB, 32)).toBe(GAIN_LINE_PADDING);
-    expect(gainLineOffset(GAIN_MAX_DB, 32)).toBe(32 - GAIN_LINE_PADDING);
+  it("reaches the very bottom and top, the 1px line filling the outer row", () => {
+    expect(GAIN_LINE_PADDING).toBe(0.5);
+    expect(gainLineOffset(GAIN_MIN_DB, 32)).toBe(0.5);
+    expect(gainLineOffset(GAIN_MAX_DB, 32)).toBe(31.5);
   });
 
   it("puts 0 dB low in the strip", () => {
-    expect(gainLineOffset(0, 32)).toBeCloseTo(3 + 0.25 * 26, 9);
+    expect(gainLineOffset(0, 32)).toBeCloseTo(0.5 + 0.25 * 31, 9);
   });
 });
 

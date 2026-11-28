@@ -202,20 +202,21 @@ describe("waveformShape", () => {
     return band + level * HEIGHT * peakScale;
   }
 
-  it("lies flat along the bottom when the line is fully down", () => {
+  it("draws nothing under or above the line when it is fully down", () => {
     const { band, peakScale } = waveformShape(-60, HEIGHT);
 
-    expect(band).toBe(3);
+    expect(band).toBe(0);
     expect(peakScale).toBe(0);
-    expect(top(-60, 1)).toBe(3);
+    expect(top(-60, 1)).toBe(0);
   });
 
-  it("fills the strip when the line is fully up", () => {
+  it("fills up to the line and nothing past it when the line is fully up", () => {
     const { band } = waveformShape(20, HEIGHT);
 
-    expect(band).toBe(HEIGHT - 3);
+    /* The line is the top pixel row, so the strips end where it starts. */
+    expect(band).toBe(HEIGHT - 1);
     expect(top(20, 1)).toBeLessThanOrEqual(HEIGHT);
-    expect(top(20, 1)).toBeGreaterThan(HEIGHT - 1);
+    expect(top(20, 0)).toBe(HEIGHT - 1);
   });
 
   it("never draws a bar below the line", () => {
