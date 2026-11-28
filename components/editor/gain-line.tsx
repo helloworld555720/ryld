@@ -185,8 +185,7 @@ export function GainLine({
         onClick={(event) => event.stopPropagation()}
         onKeyDown={handleKeyDown}
         className={cn(
-          "group pointer-events-auto absolute inset-x-0 flex h-3 -translate-y-1/2 touch-none items-center outline-none",
-          dragging ? "cursor-grabbing" : "cursor-ns-resize",
+          "group pointer-events-auto absolute inset-x-0 flex h-3 -translate-y-1/2 cursor-ns-resize touch-none items-center outline-none",
         )}
         style={{
           top: `calc(${EDGE_PADDING}px + ${1 - fraction} * (100% - ${EDGE_PADDING * 2}px))`,

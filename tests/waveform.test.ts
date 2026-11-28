@@ -185,6 +185,23 @@ describe("waveformPath", () => {
     );
   });
 
+  it("scales every bar by the gain, stopping at the top of the strip", () => {
+    const bars = [
+      { key: 0, left: 0, level: 0.25 },
+      { key: 1, left: 3, level: 0.75 },
+    ];
+
+    expect(waveformPath(bars, 20, 2, 1)).toBe("M0 15h2v5h-2zM3 5h2v15h-2z");
+    expect(waveformPath(bars, 20, 2, 2)).toBe("M0 10h2v10h-2zM3 0h2v20h-2z");
+    expect(waveformPath(bars, 20, 2, 0.5)).toBe("M0 17.5h2v2.5h-2zM3 12.5h2v7.5h-2z");
+  });
+
+  it("collapses to the baseline at zero gain", () => {
+    expect(waveformPath([{ key: 0, left: 0, level: 1 }], 20, 2, 0)).toBe(
+      "M0 19h2v1h-2z",
+    );
+  });
+
   it("is empty without bars or without a height", () => {
     expect(waveformPath([], 20)).toBe("");
     expect(waveformPath([{ key: 0, left: 0, level: 1 }], 0)).toBe("");

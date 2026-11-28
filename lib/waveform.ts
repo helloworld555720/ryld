@@ -196,20 +196,26 @@ export function waveformBars(input: WaveformBarsInput): WaveformBar[] {
  * A single `<path>` keeps the DOM flat however many bars are visible. Heights
  * are rounded to half pixels so the bars stay crisp without a per-bar node, and
  * never fall below one pixel so silence still reads as a line.
+ *
+ * `gain` is a linear multiplier on every bar, so the waveform grows and shrinks
+ * with the clip's loudness. Loud bars stop at the top of the strip, the way a
+ * boosted signal clips.
  */
 export function waveformPath(
   bars: readonly WaveformBar[],
   height: number,
   barWidth: number = WAVEFORM_BAR_WIDTH,
+  gain: number = 1,
 ): string {
   if (!isPositive(height) || !isPositive(barWidth)) return "";
 
   const segments: string[] = [];
+  const scale = Number.isFinite(gain) && gain > 0 ? gain : 0;
 
   for (const bar of bars) {
     const barHeight = Math.min(
       height,
-      Math.max(1, Math.round(bar.level * height * 2) / 2),
+      Math.max(1, Math.round(bar.level * scale * height * 2) / 2),
     );
     const x = Math.round(bar.left * 100) / 100;
     segments.push(

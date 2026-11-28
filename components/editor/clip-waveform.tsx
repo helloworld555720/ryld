@@ -75,6 +75,8 @@ export interface ClipWaveformProps {
   height: number;
   /** A muted track keeps its waveform but reads as inactive. */
   muted?: boolean;
+  /** Linear loudness multiplier: the bars grow and shrink with the clip's level. */
+  gain?: number;
 }
 
 /**
@@ -94,6 +96,7 @@ export function ClipWaveform({
   viewportWidth,
   height,
   muted = false,
+  gain = 1,
 }: ClipWaveformProps) {
   const path = useMemo(() => {
     if (!levels) return "";
@@ -108,8 +111,9 @@ export function ClipWaveform({
       }),
       height,
       WAVEFORM_BAR_WIDTH,
+      gain,
     );
-  }, [levels, clip, pxPerSecond, clipLeftPx, viewportWidth, height]);
+  }, [levels, clip, pxPerSecond, clipLeftPx, viewportWidth, height, gain]);
 
   return (
     <svg
