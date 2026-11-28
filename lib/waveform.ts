@@ -15,6 +15,7 @@
 
 import { z } from "zod";
 
+import { fractionFromGain, gainLineOffset } from "@/lib/audio";
 import type { EditorClip } from "@/lib/editor";
 
 /** The shape `levels.json` is documented to have. Extra keys are ignored. */
@@ -196,29 +197,20 @@ export function waveformBars(input: WaveformBarsInput): WaveformBar[] {
  * A single `<path>` keeps the DOM flat however many bars are visible. Heights
  * are rounded to half pixels so the bars stay crisp without a per-bar node, and
  * never fall below one pixel so silence still reads as a line.
- *
- * `gain` is a linear multiplier on every bar, so the waveform grows and shrinks
- * with the clip's loudness. Loud bars stop at the top of the strip, the way a
- * boosted signal clips. `floor` is the shortest a bar may be, in pixels: it is
- * where the loudness line sits, so nothing is ever drawn below the line.
  */
 export function waveformPath(
   bars: readonly WaveformBar[],
   height: number,
   barWidth: number = WAVEFORM_BAR_WIDTH,
-  gain: number = 1,
-  floor: number = 0,
 ): string {
   if (!isPositive(height) || !isPositive(barWidth)) return "";
 
   const segments: string[] = [];
-  const scale = Number.isFinite(gain) && gain > 0 ? gain : 0;
-  const lowest = Number.isFinite(floor) && floor > 0 ? floor : 0;
 
   for (const bar of bars) {
     const barHeight = Math.min(
       height,
-      Math.max(1, lowest, Math.round(bar.level * scale * height * 2) / 2),
+      Math.max(1, Math.round(bar.level * height * 2) / 2),
     );
     const x = Math.round(bar.left * 100) / 100;
     segments.push(
@@ -227,4 +219,42 @@ export function waveformPath(
   }
 
   return segments.join("");
+}
+
+/** The loudness position at which the peaks are fully drawn; below it they grow in. */
+const PEAKS_FULL_AT = 0.5;
+
+export interface WaveformShape {
+  /** Height of the solid band under the loudness line, in pixels. */
+  band: number;
+  /** Vertical scale for the peaks, which stand on top of the band. */
+  peakScale: number;
+}
+
+/**
+ * How the waveform looks for a loudness line at `db` in a strip `height` pixels
+ * tall. It follows the line's **position**, not the audio's gain, so every
+ * pixel of drag changes it by a proportional, continuous amount:
+ *
+ * - line at the bottom: a flat strip along the bottom edge and no peaks;
+ * - line rising: the band under it rises with it, and the peaks grow in
+ *   steadily over the lower half of the travel, filling the space above it;
+ * - line at the top: the whole strip is filled.
+ *
+ * Nothing is ever drawn below the line, because the line is the top of the band.
+ * A peak of level `L` ends `L * (height - band) * grow` above the band, which
+ * only ever grows as the line rises. The growth is a straight ramp on purpose:
+ * its slope is the smallest that still reaches full size, so the waveform never
+ * moves much for a small nudge of the line.
+ */
+export function waveformShape(db: number, height: number): WaveformShape {
+  if (!isPositive(height)) return { band: 0, peakScale: 0 };
+
+  const band = gainLineOffset(db, height);
+  const grow = Math.min(Math.max(fractionFromGain(db) / PEAKS_FULL_AT, 0), 1);
+
+  return {
+    band,
+    peakScale: (Math.max(height - band, 0) / height) * grow,
+  };
 }

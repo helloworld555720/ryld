@@ -2,13 +2,13 @@
 
 import { memo, useEffect, useMemo, useState } from "react";
 
-import { dbToLinear, gainLineOffset } from "@/lib/audio";
 import type { EditorClip } from "@/lib/editor";
 import {
   WAVEFORM_BAR_WIDTH,
   parseAudioLevels,
   waveformBars,
   waveformPath,
+  waveformShape,
   type AudioLevels,
 } from "@/lib/waveform";
 
@@ -124,19 +124,14 @@ function ClipWaveformView({
     [levels, duration, sourceOffset, pxPerSecond, clipLeftPx, viewportWidth],
   );
 
+  /* Full-height bars, drawn once per zoom and scroll. Loudness never touches
+   * this string: it only moves and scales the path below. */
   const path = useMemo(
-    () =>
-      levels
-        ? waveformPath(
-            bars,
-            height,
-            WAVEFORM_BAR_WIDTH,
-            dbToLinear(gainDb),
-            gainLineOffset(gainDb, height),
-          )
-        : "",
-    [levels, bars, height, gainDb],
+    () => (levels ? waveformPath(bars, height, WAVEFORM_BAR_WIDTH) : ""),
+    [levels, bars, height],
   );
+
+  const { band, peakScale } = waveformShape(gainDb, height);
 
   return (
     <svg
@@ -153,7 +148,27 @@ function ClipWaveformView({
         stroke="currentColor"
         strokeOpacity={0.35}
       />
-      {path ? <path d={path} fill="currentColor" /> : null}
+      {levels ? (
+        <>
+          {/* The band under the loudness line: nothing is ever drawn below it. */}
+          <rect
+            x="0"
+            width="100%"
+            y={height - band}
+            height={band}
+            fill="currentColor"
+          />
+          {/* The peaks stand on the band. Scaling the finished path, rather
+           * than rebuilding it, keeps every step of a drag sub-pixel smooth. */}
+          {path && peakScale > 0.001 ? (
+            <path
+              d={path}
+              fill="currentColor"
+              transform={`translate(0 ${height - band - peakScale * height}) scale(1 ${peakScale})`}
+            />
+          ) : null}
+        </>
+      ) : null}
     </svg>
   );
 }

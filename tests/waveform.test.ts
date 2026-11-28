@@ -6,7 +6,9 @@ import {
   peakBetween,
   waveformBars,
   waveformPath,
+  waveformShape,
 } from "@/lib/waveform";
+import { fractionFromGain } from "@/lib/audio";
 
 /* One value per second: 0, 10, 20 ... 100, then 0 again. */
 const levels = {
@@ -185,37 +187,83 @@ describe("waveformPath", () => {
     );
   });
 
-  it("scales every bar by the gain, stopping at the top of the strip", () => {
-    const bars = [
-      { key: 0, left: 0, level: 0.25 },
-      { key: 1, left: 3, level: 0.75 },
-    ];
-
-    expect(waveformPath(bars, 20, 2, 1)).toBe("M0 15h2v5h-2zM3 5h2v15h-2z");
-    expect(waveformPath(bars, 20, 2, 2)).toBe("M0 10h2v10h-2zM3 0h2v20h-2z");
-    expect(waveformPath(bars, 20, 2, 0.5)).toBe("M0 17.5h2v2.5h-2zM3 12.5h2v7.5h-2z");
-  });
-
-  it("never draws a bar shorter than the floor", () => {
-    const bars = [
-      { key: 0, left: 0, level: 0.1 },
-      { key: 1, left: 3, level: 0.9 },
-    ];
-
-    /* 0.1 of 20px is 2px, lifted to the 8px floor; the tall bar is untouched. */
-    expect(waveformPath(bars, 20, 2, 1, 8)).toBe("M0 12h2v8h-2zM3 2h2v18h-2z");
-    /* Turned all the way down, the floor is all that is left. */
-    expect(waveformPath(bars, 20, 2, 0, 3)).toBe("M0 17h2v3h-2zM3 17h2v3h-2z");
-  });
-
-  it("collapses to the baseline at zero gain", () => {
-    expect(waveformPath([{ key: 0, left: 0, level: 1 }], 20, 2, 0)).toBe(
-      "M0 19h2v1h-2z",
-    );
-  });
-
   it("is empty without bars or without a height", () => {
     expect(waveformPath([], 20)).toBe("");
     expect(waveformPath([{ key: 0, left: 0, level: 1 }], 0)).toBe("");
+  });
+});
+
+describe("waveformShape", () => {
+  const HEIGHT = 32;
+
+  /** Where the top of a bar of `level` ends up, in pixels above the bottom. */
+  function top(db: number, level: number) {
+    const { band, peakScale } = waveformShape(db, HEIGHT);
+    return band + level * HEIGHT * peakScale;
+  }
+
+  it("lies flat along the bottom when the line is fully down", () => {
+    const { band, peakScale } = waveformShape(-60, HEIGHT);
+
+    expect(band).toBe(3);
+    expect(peakScale).toBe(0);
+    expect(top(-60, 1)).toBe(3);
+  });
+
+  it("fills the strip when the line is fully up", () => {
+    const { band } = waveformShape(20, HEIGHT);
+
+    expect(band).toBe(HEIGHT - 3);
+    expect(top(20, 1)).toBeLessThanOrEqual(HEIGHT);
+    expect(top(20, 1)).toBeGreaterThan(HEIGHT - 1);
+  });
+
+  it("never draws a bar below the line", () => {
+    for (let db = -60; db <= 20; db += 1) {
+      const { band } = waveformShape(db, HEIGHT);
+      expect(top(db, 0)).toBeGreaterThanOrEqual(band);
+      expect(top(db, 0.5)).toBeGreaterThanOrEqual(band);
+    }
+  });
+
+  it("only grows as the line rises, for quiet and loud bars alike", () => {
+    for (const level of [0, 0.2, 0.6, 1]) {
+      let previous = -1;
+      for (let db = -60; db <= 20; db += 0.25) {
+        const height = top(db, level);
+        expect(height).toBeGreaterThanOrEqual(previous - 1e-9);
+        previous = height;
+      }
+    }
+  });
+
+  it("changes in small steps for small movements of the line", () => {
+    /* One percent of the line's travel is about a quarter of a pixel here, so
+     * no bar may move more than a pixel for it: no big jumps. */
+    /* The line's level at a fraction of its travel, without the 0 dB snap. */
+    const dbAt = (fraction: number) => {
+      let low = -60;
+      let high = 20;
+      for (let i = 0; i < 60; i += 1) {
+        const mid = (low + high) / 2;
+        if (fractionFromGain(mid) < fraction) low = mid;
+        else high = mid;
+      }
+      return (low + high) / 2;
+    };
+
+    for (const level of [0.2, 0.6, 1]) {
+      let previous = top(-60, level);
+      for (let step = 1; step <= 100; step += 1) {
+        const db = dbAt(step / 100);
+        const height = top(db, level);
+        expect(Math.abs(height - previous)).toBeLessThan(1);
+        previous = height;
+      }
+    }
+  });
+
+  it("draws nothing for a strip with no height", () => {
+    expect(waveformShape(0, 0)).toEqual({ band: 0, peakScale: 0 });
   });
 });

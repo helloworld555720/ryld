@@ -9,8 +9,12 @@
 export const GAIN_MIN_DB = -60;
 export const GAIN_MAX_DB = 20;
 
-/** Dragging this close to 0 dB snaps to it, so "unchanged" is easy to hit. */
-const SNAP_DB = 1;
+/**
+ * Dragging this close to 0 dB snaps to it. Kept under half a pixel of travel on
+ * purpose: a wider snap makes the line, and the waveform that follows it, hop
+ * as it crosses 0 dB. Double-click (or `0`) resets exactly.
+ */
+const SNAP_DB = 0.5;
 
 /** Breathing room at both ends of a loudness line's travel, in pixels. */
 export const GAIN_LINE_PADDING = 3;
