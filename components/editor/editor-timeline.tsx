@@ -76,8 +76,11 @@ const CLIP_HEIGHT = TRACK_HEIGHT - 16;
 /** The waveform strip along the bottom of a video clip. */
 const WAVEFORM_HEIGHT = 32;
 
+/** Breathing room between the frames and the waveform strip, in pixels. */
+const WAVEFORM_GAP = 4;
+
 /** What is left of the clip's inner box (inside its 1px border) for frames. */
-const THUMBNAIL_HEIGHT = CLIP_HEIGHT - 2 - WAVEFORM_HEIGHT;
+const THUMBNAIL_HEIGHT = CLIP_HEIGHT - 2 - WAVEFORM_HEIGHT - WAVEFORM_GAP;
 
 /** Lane-edge distance and step for auto-panning while a clip is dragged. */
 const DRAG_SCROLL_EDGE = 40;
